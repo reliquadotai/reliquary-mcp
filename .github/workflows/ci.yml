@@ -1,0 +1,29 @@
+name: Verification
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '24.21.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Container startup
+        run: |
+          docker build -t reliquary-mcp:test .
+          docker run --name mcp-smoke -d --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+            -e RELIQUARY_TRANSPORT=http -e RELIQUARY_MCP_TOKEN=container_test_token_00000000000000 reliquary-mcp:test
+          trap 'docker rm -f mcp-smoke >/dev/null' EXIT
+          for attempt in $(seq 1 20); do
+            if docker exec mcp-smoke node -e "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"; then exit 0; fi
+            sleep 1
+          done
+          exit 1

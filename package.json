@@ -1,0 +1,31 @@
+{
+  "name": "@reliquary/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Account-scoped MCP interface for Reliquary",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "reliquary-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "check": "npm test && npm audit --omit=dev --audit-level=high",
+    "start": "node dist/index.js",
+    "smoke:live": "node scripts/smoke-live.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
+    "@types/node": "22.19.15",
+    "typescript": "5.9.3"
+  }
+}
