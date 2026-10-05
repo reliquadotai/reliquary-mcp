@@ -1,13 +1,15 @@
 #!/usr/bin/env node
-import { serveStdio } from '@modelcontextprotocol/server/stdio';
-import { loadConfig } from './config.js';
+import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
+import { loadConfig, mcpMessageLimit } from './config.js';
 import { buildServer } from './server.js';
 import { createHttpServer } from './http.js';
 
 try {
   const config = loadConfig();
   if (config.transport === 'stdio') {
-    const handle = serveStdio(() => buildServer(config));
+    const handle = serveStdio(() => buildServer(config), {
+      transport: new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: mcpMessageLimit }),
+    });
     const stop = () => { void handle.close().finally(() => { process.exitCode = 0; }); };
     process.once('SIGTERM', stop);
     process.once('SIGINT', stop);

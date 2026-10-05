@@ -3,12 +3,13 @@ import { timingSafeEqual } from 'node:crypto';
 import { createMcpHandler, type McpServer } from '@modelcontextprotocol/server';
 import { hostHeaderValidation, toNodeHandler } from '@modelcontextprotocol/node';
 import type { Config } from './config.js';
+import { mcpMessageLimit } from './config.js';
 
 export function createHttpServer(config: Config, factory: () => McpServer): Server {
   if (!config.mcpToken) throw new Error('HTTP credential is required.');
   const expected = Buffer.from(`Bearer ${config.mcpToken}`);
-  const handler = createMcpHandler(factory, { maxRequestBodySize: 6 * 1024 * 1024 });
-  const nodeHandler = toNodeHandler(handler, { maxRequestBodySize: 6 * 1024 * 1024 });
+  const handler = createMcpHandler(factory, { maxRequestBodySize: mcpMessageLimit });
+  const nodeHandler = toNodeHandler(handler, { maxRequestBodySize: mcpMessageLimit });
   const allowedHosts = ['localhost', '127.0.0.1', ...(config.publicUrl ? [new URL(config.publicUrl).hostname] : [])];
   const validateHost = hostHeaderValidation(allowedHosts);
   let active = 0;

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { request } from 'node:http';
+import { request, createServer } from 'node:http';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
@@ -127,4 +127,54 @@ test('stdio process speaks MCP without startup output on protocol stream', async
     assert.equal((await client.callTool({ name: 'reliquary_connection', arguments: {} })).structuredContent.data.writesEnabled, false);
     assert.equal(stderr, '');
   } finally { await client.close(); }
+});
+
+test('both transports accept the full 5 MiB file cap inside an escaped MCP envelope', async () => {
+  const limit = 5 * 1024 * 1024;
+  const row = JSON.stringify({ prompt: 'Question', response: 'Answer' }) + '\n';
+  const jsonl = '\t'.repeat(limit - Buffer.byteLength(row)) + row;
+  assert.equal(Buffer.byteLength(jsonl), limit);
+  assert(Buffer.byteLength(JSON.stringify({ jsonl })) > 10 * 1024 * 1024 - 100);
+  let uploads = 0;
+  const backend = createServer(async (req, res) => {
+    let bytes = 0;
+    for await (const chunk of req) bytes += chunk.length;
+    assert.equal(req.url, '/api/v1/training/files');
+    assert.equal(bytes, limit);
+    uploads++;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ file: { id: 'boundary-file' } }));
+  });
+  backend.listen(0, '127.0.0.1');
+  await once(backend, 'listening');
+  const childEnv = {
+    RELIQUARY_API_URL: `http://127.0.0.1:${backend.address().port}`,
+    RELIQUARY_ALLOW_LOCAL_HTTP: 'true', RELIQUARY_ENABLE_WRITES: 'true',
+    RELIQUARY_TRAINING_KEY: env.RELIQUARY_TRAINING_KEY,
+  };
+  try {
+    for (const mode of ['stdio', 'http']) {
+      let http;
+      let transport;
+      if (mode === 'stdio') {
+        transport = new StdioClientTransport({ command: process.execPath, args: ['dist/index.js'], env: childEnv, stderr: 'pipe' });
+      } else {
+        const config = loadConfig({ ...childEnv, RELIQUARY_TRANSPORT: 'http', RELIQUARY_MCP_TOKEN: 'u'.repeat(48) });
+        http = createHttpServer(config, () => buildServer(config));
+        http.listen(0, '127.0.0.1');
+        await once(http, 'listening');
+        transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${http.address().port}/mcp`), { requestInit: { headers: { Authorization: 'Bearer ' + config.mcpToken } } });
+      }
+      const client = new Client({ name: 'upload-boundary-test', version: '1.0.0' });
+      try {
+        await client.connect(transport);
+        const result = await client.callTool({ name: 'reliquary_training_upload', arguments: { name: 'boundary.jsonl', format: 'instruction', jsonl, rightsConfirmed: true } });
+        assert.equal(result.structuredContent.data.file.id, 'boundary-file');
+      } finally {
+        await client.close();
+        if (http) { http.closeAllConnections(); await new Promise(resolve => http.close(resolve)); }
+      }
+    }
+    assert.equal(uploads, 2);
+  } finally { backend.closeAllConnections(); await new Promise(resolve => backend.close(resolve)); }
 });

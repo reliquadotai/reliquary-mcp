@@ -1,4 +1,6 @@
 export const scopes = ['resources', 'orders', 'evaluations', 'training'] as const;
+// A 5 MiB JSONL string can double when escaped inside a protocol message.
+export const mcpMessageLimit = 12 * 1024 * 1024;
 export type CredentialScope = (typeof scopes)[number];
 export interface Config {
   apiUrl: string;

@@ -73,9 +73,9 @@ Generate an independent random MCP token, for example with `openssl rand -hex 32
 The default bind is `127.0.0.1:3000`. For a container or external listener, set `RELIQUARY_HTTP_HOST=0.0.0.0` and `RELIQUARY_PUBLIC_URL=https://<your-host>/mcp`. Terminate TLS at a trusted reverse proxy; preserve the approved Host header, prevent access to the internal plaintext port, disable proxy request/authorization logging, and apply proxy rate limits. Only that exact browser origin is accepted. Non-browser clients may omit Origin.
 
 ```sh
-docker build -t reliquary-mcp:0.1.0 .
+docker build -t reliquary-mcp:0.1.1 .
 docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.1.0
+  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.1.1
 ```
 
 Configure the ignored environment file for HTTP and external container binding before this command. The image runs as an unprivileged user and contains no credentials. Dependencies and the base image digest are locked. Shutdown stops accepting requests and drains connections for up to five seconds. Upstream API requests time out after 30 seconds by default and have a process-wide admission limit of 32.
