@@ -96,6 +96,18 @@ test('authenticated HTTP transport works; token, Host and Origin gates fail clos
     const connection = await client.callTool({ name: 'reliquary_connection', arguments: {} });
     assert.equal(connection.structuredContent.data.accountMode, 'single-account');
     assert(!JSON.stringify(connection).includes(config.mcpToken));
+    const legacyCall = async payload => {
+      const response = await fetch(base + '/mcp', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + config.mcpToken, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-11-25' }, body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 200);
+      const text = await response.text();
+      return JSON.parse(text.startsWith('event:') || text.startsWith('data:') ? text.split('\n').find(line => line.startsWith('data:')).slice(5).trim() : text);
+    };
+    const initialize = await legacyCall({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'legacy-test', version: '1.0.0' } } });
+    assert.equal(initialize.result.protocolVersion, '2025-11-25');
+    const legacyTools = await legacyCall({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+    assert(legacyTools.result.tools.some(tool => tool.name === 'reliquary_connection'));
   } finally {
     await client.close();
     server.closeAllConnections();

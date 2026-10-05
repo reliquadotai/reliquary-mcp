@@ -44,3 +44,14 @@ test('bounded reads, safe backend errors and ambiguous mutations', async () => {
   await assert.rejects(api(new Response('x'.repeat(4 * 1024 * 1024 + 1))).request({ path: '/api/resources', method: 'POST', headers: { 'Idempotency-Key': 'retry-key-12345678' } }), { code: 'outcome_unknown', retryKey: 'retry-key-12345678' });
   await assert.rejects(api(Response.json({ error: { code: 'permission_required', message: 'private detail' } }, { status: 403 })).request({ path: '/api/resources' }), error => error.code === 'permission_required' && !error.message.includes('private detail'));
 });
+
+test('request admission is bounded across clients and released after completion', async () => {
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const pending = Array.from({ length: 32 }, () => new ApiClient(config, async () => { await held; return Response.json({ ok: true }); }).request({ path: '/api/catalog' }));
+  await assert.rejects(new ApiClient(config).request({ path: '/api/catalog' }), { code: 'server_busy' });
+  release();
+  await Promise.all(pending);
+  const result = await new ApiClient(config, async () => Response.json({ ok: true })).request({ path: '/api/catalog' });
+  assert.equal(result.ok, true);
+});
