@@ -31,6 +31,7 @@ test('spending and destructive operations require explicit approval', () => {
     training_start: { draftId: 'draft-1', datasetId: 'file-1', revision: 1, idempotencyKey: key },
     resource_archive: { id: 'draft-1', revision: 1 }, generation_cancel: { id: 'order-1' }, evaluation_cancel: { id: 'eval-1' },
     training_cancel: { id: 'task-1' }, training_file_archive: { id: 'file-1' },
+    job_control: { id: 'cpu:11111111-1111-4111-8111-111111111111', action: 'cancel', revision: '1', reason: 'Reviewed cancellation.', idempotencyKey: '22222222-2222-4222-8222-222222222222' },
   };
   for (const operation of operations.filter(o => o.spend || o.destructive)) {
     const input = examples[operation.name.replace('reliquary_', '')];
