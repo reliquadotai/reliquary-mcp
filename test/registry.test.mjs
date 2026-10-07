@@ -91,6 +91,14 @@ test('quotes preserve reviewed inputs and backend sampling limits', () => {
   assert.deepEqual(op('evaluation_quote').build(input), { method: 'POST', path: '/api/v1/evaluations/quotes', scope: 'evaluations', json: input });
   assert.throws(() => op('evaluation_quote').build({ ...input, sampling: { temperature: 2.1 } }));
   assert.throws(() => op('evaluation_quote').build({ ...input, revision: 'main' }));
+  const generation = op('generation_pinned_quote');
+  const pinned = { model: input.model, revision: input.revision, env: 'math', prompt_count: 10,
+    samples_per_prompt: 2, max_new_tokens: 1024, thinking: false, sampling: { temperature: 0 } };
+  assert.deepEqual({
+    exclusiveMinimum: z.toJSONSchema(generation.schema).properties.sampling.properties.temperature.exclusiveMinimum,
+    generationAcceptsZero: generation.schema.safeParse(pinned).success,
+    evaluationAcceptsZero: op('evaluation_quote').schema.safeParse({ ...input, sampling: { temperature: 0 } }).success,
+  }, { exclusiveMinimum: 0, generationAcceptsZero: false, evaluationAcceptsZero: true });
   const quote = { draftId: 'draft-1', datasetId: 'file-1', revision: 2 };
   assert.deepEqual(op('training_quote').build(quote), { method: 'POST', path: '/api/v1/training/quotes', scope: 'training', json: quote });
 });
