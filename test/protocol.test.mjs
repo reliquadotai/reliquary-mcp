@@ -49,7 +49,7 @@ test('actual MCP quote and launch preserve exact approval, scoped key and retry 
       if (launches === 1) throw new Error('ambiguous network result');
       return Response.json({ task: { id: 'task-1', status: 'queued' } });
     }
-    return Response.json({ execution: 'disabled', observedAt: null });
+    return Response.json({ ordering: 'disabled', any_model_ordering: 'disabled', envs: [], models: [] });
   });
   const session = await memory(config, api);
   try {
@@ -70,7 +70,7 @@ test('actual MCP quote and launch preserve exact approval, scoped key and retry 
     assert.deepEqual(calls[1].body, { draftId: 'draft-1', datasetId: 'file-1', revision: 3, quoteId: 'quote-1', approveExecution: true });
     assert(!('idempotencyKey' in calls[1].body));
     const catalog = await call('generation_catalog', {});
-    assert.equal(catalog.structuredContent.data.execution, 'disabled');
+    assert.equal(catalog.structuredContent.data.ordering, 'disabled');
     assert.equal(calls.at(-1).init.headers.get('Authorization'), null);
   } finally { await session.close(); }
 });

@@ -1,5 +1,6 @@
 import type { Config } from './config.js';
 import type { ApiRequest } from './tools.js';
+import { parseGenerationResponse } from '@reliquary/api';
 
 const JSON_LIMIT = 4 * 1024 * 1024;
 const DOWNLOAD_LIMIT = 256 * 1024;
@@ -91,7 +92,9 @@ export class ApiClient {
       try {
         const parsed: unknown = JSON.parse(bytes.toString('utf8'));
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not_object');
-        return parsed as Record<string, unknown>;
+        return input.generationResponse
+          ? parseGenerationResponse(input.generationResponse, parsed, 'key', input.generationExpected) as Record<string, unknown>
+          : parsed as Record<string, unknown>;
       } catch { throw new ApiError(mutating ? 'outcome_unknown' : 'invalid_response', response.status, retryKey); }
     } catch (error) {
       if (error instanceof ApiError) throw error;

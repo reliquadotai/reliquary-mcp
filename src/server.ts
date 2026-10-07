@@ -5,7 +5,7 @@ import type { Config } from './config.js';
 import { operations } from './tools.js';
 import { workflowText } from './workflows.js';
 
-export const version = '0.1.1';
+export const version = '0.1.2';
 const outputSchema = z.object({ data: z.record(z.string(), z.unknown()) });
 export function buildServer(config: Config, api = new ApiClient(config)): McpServer {
   const available = operations.filter(op => (!op.scope || config.keys[op.scope]) && (!op.write || config.enableWrites));

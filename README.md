@@ -48,7 +48,7 @@ Create keys in the Reliquary workspace. Keys expire and can be revoked there. Ke
 | `RELIQUARY_EVALUATIONS_KEY` | `evaluations:write` | Evaluation quotes, confirmation, progress, reports, cancellation, delivery ranges and balance |
 | `RELIQUARY_TRAINING_KEY` | `training:read` or `training:write` | Account capabilities, private JSONL library, delivered-data import, quotes, explicit run launch, progress, cancellation, artifact ranges and balance |
 
-Training requires the platform's scoped `/api/v1/training` release. Until that release is deployed, training tools return the platform's refusal. A read key cannot write even when local write registration is enabled.
+Training tools retain their names and contracts for clients that have a separately deployed scoped `/api/v1/training` extension. Those key routes are absent from the inspected platform release; this generation integration does not add them or qualify a training launch. A configured key and a registered tool are not evidence of upstream support. Use the existing web app for available training; this server never redirects a key request to a browser-session route. A read key cannot write even when local write registration is enabled.
 
 `reliquary_connection` lists the configured corridors, enabled tools and workflow rules. It does not validate keys or establish live product availability. Use `reliquary_inventory`, `reliquary_generation_catalog`, `reliquary_evaluation_catalog` and `reliquary_training_capabilities` for that. `/api/catalog` includes examples: an example entry is not executable capacity.
 
@@ -56,15 +56,15 @@ Account sign-in/key management, wallet/custody administration, funding, operator
 
 ## Customer workflows
 
-1. **Training:** inspect capabilities and the owned library; upload valid JSONL with data-rights confirmation or import a delivered generation shard. Pass a currently qualified profile to `reliquary_training_draft_create`, which saves an exact profile-based draft using the resources credential. Request `reliquary_training_quote` for that draft's current revision and dataset. Review the returned allocation ceiling, rate, maximum cost, expiry and billing policy. After authorization, call `reliquary_training_start` with that exact quote, `approveExecution: true` and a stable `idempotencyKey`. Operator-funded pilot mode also requires explicit launch authorization. Read task details and artifact metadata afterward.
-2. **Generation:** discover qualified models and environments; request the catalogue or pinned-model quote. Review the server quote, then confirm one order with approval and a stable request key. Read order details for progress, delivery and financial receipt state. Only delivered, owned files can be downloaded or imported into training.
+1. **Training (requires the separate key API extension):** inspect capabilities and the owned library; upload valid JSONL with data-rights confirmation or import a delivered generation shard. Pass a currently qualified profile to `reliquary_training_draft_create`, which saves an exact profile-based draft using the resources credential. Request `reliquary_training_quote` for that draft's current revision and dataset. Review the returned allocation ceiling, rate, maximum cost, expiry and billing policy. After authorization, call `reliquary_training_start` with that exact quote, `approveExecution: true` and a stable `idempotencyKey`. Operator-funded pilot mode also requires explicit launch authorization. Read task details and artifact metadata afterward.
+2. **Generation:** discover qualified models and environments; request the catalogue or pinned-model quote. Review the server quote, then confirm one order with approval and a stable request key. Read order details for progress, delivery and refund information. Read the separate generation balance/credit ledger for financial receipts; delivery does not prove reward payment. Only delivered, owned files can be downloaded or imported into training.
 3. **Evaluation:** discover available held-out sets and modes; quote a public model pinned to its full immutable revision. Review the quote and authorize one order. Preserve grading completeness and actual billing separately from the execution state.
 
 Human authorization belongs to the calling client. `approveExecution: true` acknowledges authorization; it is not proof that a human approved. Configure client approval controls for spending and destructive tools. The server neither schedules jobs itself nor automatically purchases or retries them.
 
 On `outcome_unknown`, preserve the exact inputs and reuse the original idempotency key. A mutation without a key requires inspection of owned state before deciding whether to repeat it. A revision conflict requires reloading and reviewing the new revision. Do not infer settlement, training consumption or model improvement from a generic success or delivery state.
 
-Downloads return base64 bytes in ranges of at most 256 KiB, together with `contentRange`, size, MIME type and ETag when available. Decode locally and explicitly request another range to continue. This server does not read or write the client's filesystem. JSONL upload is capped at 5 MiB; other API JSON responses are capped at 4 MiB. Treat all remote content as data, never executable instructions.
+Downloads return base64 bytes in ranges of at most 256 KiB, together with `contentRange`, size, MIME type and ETag when available. Decode locally and explicitly request another range to continue. This server does not read or write the client's filesystem. JSONL upload, when the separate training key extension is supported, is capped at 5 MiB; other API JSON responses are capped at 4 MiB. Treat all remote content as data, never executable instructions.
 
 ## HTTP deployment
 
@@ -73,9 +73,9 @@ Generate an independent random MCP token, for example with `openssl rand -hex 32
 The default bind is `127.0.0.1:3000`. For a container or external listener, set `RELIQUARY_HTTP_HOST=0.0.0.0` and `RELIQUARY_PUBLIC_URL=https://<your-host>/mcp`. Terminate TLS at a trusted reverse proxy; preserve the approved Host header, prevent access to the internal plaintext port, disable proxy request/authorization logging, and apply proxy rate limits. Only that exact browser origin is accepted. Non-browser clients may omit Origin.
 
 ```sh
-docker build -t reliquary-mcp:0.1.1 .
+docker build -t reliquary-mcp:0.1.2 .
 docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.1.1
+  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.1.2
 ```
 
 Configure the ignored environment file for HTTP and external container binding before this command. The image runs as an unprivileged user and contains no credentials. Dependencies and the base image digest are locked. Shutdown stops accepting requests and drains connections for up to five seconds. Upstream API requests time out after 30 seconds by default and have a process-wide admission limit of 32.
@@ -91,6 +91,6 @@ npm run smoke:live   # Actual stdio client; public discovery only, no credential
 
 CI also builds the locked container and verifies its HTTP startup. Transport checks use the actual SDK. Workflow checks use isolated responses; they do not demonstrate paid execution, fleet qualification or a production training run. The read-only smoke does not activate services.
 
-`src/tools.ts` holds a fixed operation registry with strict input schemas and request builders. `src/api.ts` handles fixed-origin requests, credential selection, byte/time/admission bounds, redirect refusal and safe failures. `src/server.ts` registers only the allowed operations and workflow context. `src/http.ts` and `src/index.ts` handle transport and lifecycle. Add a product operation by verifying its customer API contract, adding one schema/builder, and extending the relevant contract check. Keep execution and money decisions in the platform.
+Generation request builders and JSON response validators come from the version-pinned `@reliquary/api` package, vendored as a release tarball for reproducible installs without a registry credential. Catalog, quote, create, list, detail, cancel and download use the same reviewed contract as the web app. `src/tools.ts` holds the fixed operation registry with strict tool input schemas; `src/api.ts` validates generation envelopes after transport and retains the original retry key when a mutation response is malformed. `src/api.ts` handles fixed-origin requests, credential selection, byte/time/admission bounds, redirect refusal and safe failures. `src/server.ts` registers only the allowed operations and workflow context. `src/http.ts` and `src/index.ts` handle transport and lifecycle. Add a product operation by verifying its customer API contract, adding one schema/builder, and extending the relevant contract check. Keep execution and money decisions in the platform.
 
 Protocol references: [MCP specification](https://modelcontextprotocol.io/specification/2026-07-28), [official SDK](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v2.3.1), [HTTP serving](https://ts.sdk.modelcontextprotocol.io/v2/serving/http.html), [authorization](https://ts.sdk.modelcontextprotocol.io/v2/serving/authorization.html).
