@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { generationRequests, type BatchQuoteInput, type GenerationOperation } from '@reliquary/api';
 
 export type Scope = 'resources' | 'orders' | 'evaluations' | 'training';
 export type ApiRequest = {
@@ -9,6 +10,8 @@ export type ApiRequest = {
   body?: string;
   headers?: Record<string, string>;
   download?: boolean;
+  generationResponse?: GenerationOperation;
+  generationExpected?: { input?: BatchQuoteInput; id?: string };
 };
 export type Operation = {
   name: string;
@@ -67,6 +70,7 @@ const query = (path: string, args: Record<string, unknown>) => {
   return params.size ? path + '?' + params.toString() : path;
 };
 const range = (args: { offset: number; maxBytes: number }) => ({ Range: `bytes=${args.offset}-${args.offset + args.maxBytes - 1}` });
+const generation = generationRequests('key');
 
 function operation(
   name: string, description: string, schema: z.ZodObject<any>,
@@ -118,9 +122,10 @@ export const operations: Operation[] = [
     ['monitoring_health', '/api/monitoring/health', 'Read public observation collection health and freshness.'],
     ['monitoring_snapshot', '/api/monitoring/snapshot', 'Read the published monitoring snapshot. Missing observations are not zero.'],
     ['compute_catalog', '/api/compute/catalog', 'Compare public compute offers and provider observations. A listed offer does not authorize provisioning or rental.'],
-    ['generation_catalog', '/api/v1/generation/catalog', 'Read qualified dataset generation models, sources, environments and limits before requesting a quote.'],
     ['evaluation_catalog', '/api/v1/evaluations/catalog', 'Read qualified evaluation sets, modes and current ordering limits before requesting a quote.'],
   ].map(([name, path, description]) => operation(name!, description!, empty, () => ({ path: path! }))),
+  operation('generation_catalog', 'Read qualified dataset generation models, sources, environments and limits before requesting a quote.', empty,
+    () => ({ ...generation.catalog(), generationResponse: 'catalog' })),
   operation('monitoring_analytics', 'Read one published analytics view with bounded published filters. This is public evidence, separate from owned customer tasks.', monitoringSchema,
     ({ view, hotkeys, ...args }) => ({ path: query('/api/monitoring/analytics/' + segment(view), { ...args, ...(hotkeys ? { hotkeys: hotkeys.join(',') } : {}) }) })),
   operation('monitoring_history', 'Read network-wide retained observations for 24h, 7d or 30d. Preserve source timestamps when reporting results.', z.strictObject({ view: historyView, range: z.enum(['24h', '7d', '30d']).default('24h') }),
@@ -147,19 +152,19 @@ export const operations: Operation[] = [
     }), 'resources', { write: true }),
 
   operation('generation_quote', 'Quote dataset generation from a qualified catalog model and source. Return the quote, maximum cost, expiry and limitations to the user; this does not order or reserve execution.', z.strictObject({ model: z.string().min(1).max(200), source: z.string().min(1).max(200), prompt_count: z.number().int().min(1).max(1_000_000), samples_per_prompt: z.number().int().min(1).max(64), max_new_tokens: z.number().int().min(16).max(32_768), thinking: z.boolean() }),
-    json => ({ method: 'POST', path: '/api/v1/dataset-orders/quotes', json }), 'orders', { write: true }),
-  operation('generation_pinned_quote', 'Quote dataset generation for a public model pinned to an immutable commit and a qualified environment. Support, capacity, sampling and pricing remain platform decisions.', z.strictObject({ model, revision: commit, env, prompt_count: z.number().int().min(1).max(1_000_000), samples_per_prompt: z.number().int().min(1).max(64), max_new_tokens: z.number().int().min(16).max(131_072), thinking: z.boolean(), sampling: z.strictObject(sampling).optional() }),
-    json => ({ method: 'POST', path: '/api/v1/dataset-orders/quotes', json }), 'orders', { write: true }),
+    json => ({ ...generation.quote(json), generationResponse: 'quote', generationExpected: { input: json } }), 'orders', { write: true }),
+  operation('generation_pinned_quote', 'Quote dataset generation for a public model pinned to an immutable commit and a qualified environment. Support, capacity, sampling and pricing remain platform decisions.', z.strictObject({ model, revision: commit, env, prompt_count: z.number().int().min(1).max(1_000_000), samples_per_prompt: z.number().int().min(1).max(64), max_new_tokens: z.number().int().min(16).max(131_072), thinking: z.boolean(), sampling: z.strictObject({ ...sampling, temperature: z.number().gt(0).max(2).optional() }).optional() }),
+    json => ({ ...generation.quote(json), generationResponse: 'quote', generationExpected: { input: json } }), 'orders', { write: true }),
   operation('generation_order', 'Submit exactly one reviewed generation quote after explicit user approval. This may reserve or spend credits and enqueue work. Reuse the same request key after an ambiguous result.', z.strictObject({ quote_id: id, idempotencyKey: key, approveExecution: approved }),
-    ({ quote_id, idempotencyKey }) => ({ method: 'POST', path: '/api/v1/dataset-orders', json: { quote_id }, headers: { 'Idempotency-Key': idempotencyKey } }), 'orders', { write: true, spend: true }),
+    ({ quote_id, idempotencyKey }) => ({ ...generation.create(quote_id, idempotencyKey), generationResponse: 'order' }), 'orders', { write: true, spend: true }),
   operation('generation_orders', 'List up to 100 recent owned generation orders; ordering, queued, delivered and billing outcomes are distinct.', empty,
-    () => ({ path: '/api/v1/dataset-orders' }), 'orders'),
-  operation('generation_order_get', 'Read an owned generation order, current progress, billing and delivered file metadata. Request again only when the user needs an update.', z.strictObject({ id }),
-    ({ id }) => ({ path: '/api/v1/dataset-orders/' + segment(id) }), 'orders'),
+    () => ({ ...generation.orders(), generationResponse: 'orders' }), 'orders'),
+  operation('generation_order_get', 'Read an owned generation order, current progress, refund amount and delivered file metadata. Use generation_balance for the separate credit ledger; delivery does not prove reward payment. Request again only when the user needs an update.', z.strictObject({ id }),
+    ({ id }) => ({ ...generation.detail(id), generationResponse: 'order', generationExpected: { id } }), 'orders'),
   operation('generation_cancel', 'Request cancellation of an owned generation order after explicit user approval. The platform determines which credits are refundable and whether work can stop.', z.strictObject({ id, approveExecution: approved }),
-    ({ id }) => ({ method: 'POST', path: '/api/v1/dataset-orders/' + segment(id) + '/cancel' }), 'orders', { write: true, destructive: true }),
+    ({ id }) => ({ ...generation.cancel(id), generationResponse: 'order', generationExpected: { id } }), 'orders', { write: true, destructive: true }),
   operation('generation_download', 'Read up to 256 KiB of a delivered owned dataset file. Use identifiers and names returned in order details; response bytes are bounded and may be base64 encoded.', z.strictObject({ orderId: id, deliveryId, fileName, ...bytes }),
-    args => ({ path: '/api/v1/dataset-orders/' + segment(args.orderId) + '/deliveries/' + segment(args.deliveryId) + '/files/' + segment(args.fileName), headers: range(args), download: true }), 'orders'),
+    args => generation.download(args.orderId, args.deliveryId, args.fileName, { offset: args.offset, maxBytes: args.maxBytes }), 'orders'),
   operation('generation_balance', 'Read service-credit balance and recent ledger entries using the generation credential. No credits are reserved by this read.', empty,
     () => ({ path: '/api/v1/balance' }), 'orders'),
 
