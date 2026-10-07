@@ -1,5 +1,16 @@
 import { z } from 'zod';
 import { generationRequests, type BatchQuoteInput, type GenerationOperation } from '@reliquary/api';
+import { jobRequests, type JobCreateInput, type JobControlInput, type JobInputUpload, type JobPageInput } from '@reliquary/api/jobs';
+
+export type JobCall =
+  | { operation: 'capabilities' }
+  | { operation: 'list'; page: JobPageInput }
+  | { operation: 'detail'; id: string }
+  | { operation: 'events'; id: string; page: JobPageInput }
+  | { operation: 'artifact'; id: string; artifactId: string }
+  | { operation: 'uploadInput'; input: JobInputUpload; key: string }
+  | { operation: 'create'; input: JobCreateInput; key: string }
+  | { operation: 'control'; id: string; action: 'pause' | 'resume' | 'cancel'; input: JobControlInput; key: string };
 
 export type Scope = 'resources' | 'orders' | 'evaluations' | 'training';
 export type ApiRequest = {
@@ -12,6 +23,8 @@ export type ApiRequest = {
   download?: boolean;
   generationResponse?: GenerationOperation;
   generationExpected?: { input?: BatchQuoteInput; id?: string };
+  jobCall?: JobCall;
+  jobProtocol?: boolean;
 };
 export type Operation = {
   name: string;
@@ -71,6 +84,15 @@ const query = (path: string, args: Record<string, unknown>) => {
 };
 const range = (args: { offset: number; maxBytes: number }) => ({ Range: `bytes=${args.offset}-${args.offset + args.maxBytes - 1}` });
 const generation = generationRequests('key');
+const jobs = jobRequests('key');
+const jobUuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+const jobId = z.string().regex(/^cpu:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+const jobPage = { cursor: z.string().regex(/^[A-Za-z0-9_-]{1,512}$/).optional(), limit: z.number().int().min(1).max(100).optional() };
+const jobSpec = z.strictObject({
+  kind: z.literal('dataset_validation'),
+  input: z.strictObject({ dataset_id: jobUuid, sha256: z.string().regex(/^[a-f0-9]{64}$/), format, size_bytes: z.number().int().min(1).max(32768) }),
+  limits: z.strictObject({ deadline_seconds: z.number().int().min(60).max(3600), max_attempts: z.number().int().min(1).max(3) }),
+});
 
 function operation(
   name: string, description: string, schema: z.ZodObject<any>,
@@ -130,6 +152,32 @@ export const operations: Operation[] = [
     ({ view, hotkeys, ...args }) => ({ path: query('/api/monitoring/analytics/' + segment(view), { ...args, ...(hotkeys ? { hotkeys: hotkeys.join(',') } : {}) }) })),
   operation('monitoring_history', 'Read network-wide retained observations for 24h, 7d or 30d. Preserve source timestamps when reporting results.', z.strictObject({ view: historyView, range: z.enum(['24h', '7d', '30d']).default('24h') }),
     ({ view, range }) => ({ path: query('/api/monitoring/history/' + segment(view), { range }) })),
+
+  operation('jobs_capabilities', 'Read owned CPU validation permission, fresh qualified workers and bounded backlog. Permission, queued work and live capacity are separate; this does not qualify GPU or subnet execution.', empty,
+    () => ({ ...jobs.capabilities(), jobCall: { operation: 'capabilities' } }), 'resources'),
+  operation('jobs_list', 'List owned CPU validation jobs with bounded opaque pagination. Read another page only when needed.', z.strictObject(jobPage),
+    page => ({ ...jobs.list(page), jobCall: { operation: 'list', page } }), 'resources'),
+  operation('job_get', 'Read one owned CPU validation job, real work unit, attempts and frozen report metadata. No native administrator authority is provided.', z.strictObject({ id: jobId }),
+    ({ id }) => ({ ...jobs.detail(id), jobCall: { operation: 'detail', id } }), 'resources'),
+  operation('job_events', 'Read bounded lifecycle events for one owned CPU job; preserve timestamps and retry uncertainty.', z.strictObject({ id: jobId, ...jobPage }),
+    ({ id, ...page }) => ({ ...jobs.events(id, page), jobCall: { operation: 'events', id, page } }), 'resources'),
+  operation('job_report', 'Read and verify an owned CPU validation report against its frozen artifact size and SHA-256. Reports contain safe error codes and row counts, not dataset contents.', z.strictObject({ id: jobId, artifactId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }),
+    ({ id, artifactId }) => ({ ...jobs.artifact(id, artifactId), jobCall: { operation: 'artifact', id, artifactId } }), 'resources'),
+  operation('job_input_upload', 'Upload up to 32 KiB of owned UTF-8 JSONL for CPU dataset validation after explicit approval and confirmation of data rights. Format is instruction, preference or corpus. The immutable receipt pins bytes and format; malformed rows may be inspected by a validation job. Uploading does not launch execution.', z.strictObject({ format, content: z.string().min(1).refine(v => Buffer.byteLength(v) <= 32768, 'Input must fit in 32768 UTF-8 bytes.'), idempotencyKey: jobUuid, rightsConfirmed: z.literal(true), approveExecution: approved }),
+    ({ format, content, idempotencyKey }) => {
+      const input: JobInputUpload = { schema_version: 1, format, content };
+      return { ...jobs.uploadInput(input, idempotencyKey), jobCall: { operation: 'uploadInput', input, key: idempotencyKey } };
+    }, 'resources', { write: true }),
+  operation('job_submit', 'Submit exactly one reviewed CPU dataset validation job after explicit user approval, using an owned pinned input receipt, bounded deadline and attempt count. No paid capacity is provisioned. Preserve the original UUID request key after an unknown outcome.', z.strictObject({ spec: jobSpec, idempotencyKey: jobUuid, approveExecution: approved }),
+    ({ spec, idempotencyKey }) => {
+      const input: JobCreateInput = { schema_version: 1, spec };
+      return { ...jobs.create(input, idempotencyKey), jobCall: { operation: 'create', input, key: idempotencyKey } };
+    }, 'resources', { write: true }),
+  operation('job_control', 'Pause, resume or cancel one owned CPU validation job after explicit user approval at the exact reviewed revision. Cancellation and pause drain or revoke in-flight authority; inspect the returned state. No native administrator controls are exposed.', z.strictObject({ id: jobId, action: z.enum(['pause', 'resume', 'cancel']), revision: z.string().regex(/^[1-9][0-9]{0,15}$/), reason: z.string().trim().min(3).max(500).regex(/^[^\x00-\x1f\x7f]+$/), idempotencyKey: jobUuid, approveExecution: approved }),
+    ({ id, action, revision, reason, idempotencyKey }) => {
+      const input: JobControlInput = { schema_version: 1, revision, reason };
+      return { ...jobs.control(id, action, input, idempotencyKey), jobCall: { operation: 'control', id, action, input, key: idempotencyKey } };
+    }, 'resources', { write: true, destructive: true }),
 
   operation('resources_list', 'List owned saved resource drafts. Follow nextCursor explicitly for another page. Saving a draft does not launch a task.', z.strictObject({ kind: kind.optional(), archived: z.boolean().optional(), cursor: z.string().min(1).max(1024).optional() }),
     args => ({ path: query('/api/resources', args) }), 'resources'),
