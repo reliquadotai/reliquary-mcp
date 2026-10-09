@@ -102,7 +102,7 @@ test('real stdio MCP job flow preserves wire bytes, owner scope, report integrit
       const upload = JSON.parse(body); data = { schema_version: 1, input: { ...input, sha256: digest(upload.content), size_bytes: Buffer.byteLength(upload.content) } };
     } else if (request.url.endsWith('/events')) data = { schema_version: 1, events: [], next_cursor: null };
     else if (request.url.endsWith('/artifacts/report-a')) data = { schema_version: 1, artifact, report };
-    else if (request.url.endsWith('/cancel')) data = {};
+    else if (request.url.endsWith('/cancel')) { data = { error: { code: 'internal_error' } }; response.statusCode = 503; response.setHeader('X-Request-ID', 'request-123'); }
     else if (request.url === '/api/v1/jobs' && request.method === 'GET') data = { schema_version: 1, jobs: [job], next_cursor: null };
     else data = { schema_version: 1, job };
     response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(data));
@@ -128,7 +128,7 @@ test('real stdio MCP job flow preserves wire bytes, owner scope, report integrit
     assert.deepEqual((await call('job_events', { id })).structuredContent.data.events, []);
     assert.deepEqual((await call('job_report', { id, artifactId: 'report-a' })).structuredContent.data.report, report);
     const unknown = await call('job_control', { id, action: 'cancel', revision: '1', reason: 'Reviewed cancellation.', idempotencyKey: requestKey, approveExecution: true });
-    assert.deepEqual(unknown.structuredContent.data.error, { code: 'outcome_unknown', idempotencyKey: requestKey, revision: '1' });
+    assert.deepEqual(unknown.structuredContent.data.error, { code: 'outcome_unknown', status: 503, idempotencyKey: requestKey, revision: '1', requestId: 'request-123' });
     assert.equal(seen.filter(r => r.path.endsWith('/cancel')).length, 1);
     assert(seen.every(r => r.headers.authorization === `Bearer ${credential}` && !r.headers.cookie && !r.headers['x-action-proof']));
     assert.equal(seen.at(-1).headers['x-resource-revision'], '1'); assert.equal(seen.at(-1).headers['idempotency-key'], requestKey);

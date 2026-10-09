@@ -5,7 +5,7 @@ import type { Config } from './config.js';
 import { operations } from './tools.js';
 import { workflowText } from './workflows.js';
 
-export const version = '0.2.1';
+export const version = '0.2.2';
 const outputSchema = z.object({ data: z.record(z.string(), z.unknown()) });
 export function buildServer(config: Config, api = new ApiClient(config)): McpServer {
   const available = operations.filter(op => (!op.scope || config.keys[op.scope]) && (!op.write || config.enableWrites));
@@ -34,7 +34,7 @@ export function buildServer(config: Config, api = new ApiClient(config)): McpSer
         return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: { data } };
       } catch (error) {
         const safe = error instanceof ApiError ? error : new ApiError('request_failed');
-        const detail = { code: safe.code, ...(safe.status ? { status: safe.status } : {}), ...(safe.retryKey ? { idempotencyKey: safe.retryKey } : {}), ...(safe.revision ? { revision: safe.revision } : {}) };
+        const detail = { code: safe.code, ...(safe.status ? { status: safe.status } : {}), ...(safe.retryKey ? { idempotencyKey: safe.retryKey } : {}), ...(safe.revision ? { revision: safe.revision } : {}), ...(safe.requestId ? { requestId: safe.requestId } : {}), ...(safe.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: safe.retryAfterSeconds }) };
         return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: detail }) }], structuredContent: { data: { error: detail } } };
       }
     });

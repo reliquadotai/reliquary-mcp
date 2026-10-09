@@ -21,7 +21,7 @@ function integer(value: string | undefined, fallback: number, min: number, max: 
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const url = new URL(env.RELIQUARY_API_URL ?? 'https://app.reliqua.ai');
+  const url = new URL(env.RELIQUARY_API_URL ?? 'https://api.reliqua.ai');
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (url.username || url.password || url.search || url.hash || url.pathname !== '/' ||
       (url.protocol !== 'https:' && !(local && url.protocol === 'http:' && env.RELIQUARY_ALLOW_LOCAL_HTTP === 'true'))) {
