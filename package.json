@@ -1,6 +1,6 @@
 {
   "name": "@reliquary/mcp",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "license": "UNLICENSED",
   "description": "Account-scoped MCP interface for Reliquary",
@@ -21,7 +21,7 @@
   "dependencies": {
     "@modelcontextprotocol/node": "2.1.1",
     "@modelcontextprotocol/server": "2.3.1",
-    "@reliquary/api": "file:vendor/api-client-0.2.1.tgz",
+    "@reliquary/api": "file:vendor/api-client-0.2.2.tgz",
     "zod": "4.3.6"
   },
   "devDependencies": {

@@ -5,6 +5,24 @@ import { ApiClient } from '../dist/api.js';
 
 const key = 'rlq_' + '1'.repeat(48);
 const config = loadConfig({ RELIQUARY_RESOURCES_KEY: key, RELIQUARY_ENABLE_WRITES: 'true' });
+test('safe refusal diagnostics reach callers without retrying or exposing raw errors', async () => {
+  let calls = 0;
+  const api = new ApiClient(config, async () => {
+    calls++;
+    return Response.json({ error: { code: 'rate_limited', message: 'private upstream detail' } }, {
+      status: 429, headers: { 'X-Request-ID': 'request-123', 'Retry-After': '17' },
+    });
+  });
+  await assert.rejects(api.request({ path: '/api/resources', scope: 'resources' }), error =>
+    error.code === 'rate_limited' && error.requestId === 'request-123' && error.retryAfterSeconds === 17 &&
+    !error.message.includes('private upstream detail'));
+  assert.equal(calls, 1);
+  const invalid = new ApiClient(config, async () => Response.json({ error: { code: 'rate_limited' } }, {
+    status: 429, headers: { 'X-Request-ID': '<unsafe>', 'Retry-After': '999999999' },
+  }));
+  await assert.rejects(invalid.request({ path: '/api/resources', scope: 'resources' }), error =>
+    error.requestId === undefined && error.retryAfterSeconds === undefined);
+});
 test('configuration rejects unsafe origins and invalid credentials', () => {
   for (const url of ['http://example.com', 'https://u:p@example.com', 'https://example.com/path', 'https://example.com?x=1']) {
     assert.throws(() => loadConfig({ RELIQUARY_API_URL: url }));
@@ -14,6 +32,7 @@ test('configuration rejects unsafe origins and invalid credentials', () => {
   assert.throws(() => loadConfig({ RELIQUARY_TRANSPORT: 'http', RELIQUARY_MCP_TOKEN: key, RELIQUARY_RESOURCES_KEY: key }));
   assert.throws(() => loadConfig({ RELIQUARY_TRANSPORT: 'http', RELIQUARY_MCP_TOKEN: 'a'.repeat(32), RELIQUARY_HTTP_HOST: '0.0.0.0' }));
   assert.equal(loadConfig({}).enableWrites, false);
+  assert.equal(loadConfig({}).apiUrl, 'https://api.reliqua.ai');
   assert.equal(loadConfig({ RELIQUARY_API_URL: 'http://127.0.0.1:1234', RELIQUARY_ALLOW_LOCAL_HTTP: 'true' }).apiUrl, 'http://127.0.0.1:1234');
 });
 test('credential routing, no public credential, strict route and write guards', async () => {
