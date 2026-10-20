@@ -79,6 +79,32 @@ test('actual MCP quote and launch preserve exact approval, scoped key and retry 
   } finally { await session.close(); }
 });
 
+test('MCP training task reads preserve partial steps and legacy results', async () => {
+  const fixtures = [
+    { task: { id: 'task-1', status: 'succeeded' }, configuration: { optimization: { maxSteps: 50 } }, result: { reloadVerified: true, steps: 47 }, events: [{ sequence: 1, status: 'running', message: 'Training step 40 completed.' }] },
+    { task: { id: 'task-1', status: 'succeeded' }, result: { reloadVerified: true } },
+  ];
+  let reads = 0;
+  const config = loadConfig({ RELIQUARY_TRAINING_KEY: env.RELIQUARY_TRAINING_KEY });
+  const api = new ApiClient(config, async (url, init) => {
+    assert.equal(url.pathname, '/api/v1/training/tasks/task-1');
+    assert.equal(init.method, 'GET');
+    return Response.json(fixtures[reads++]);
+  });
+  const session = await memory(config, api);
+  try {
+    for (const fixture of fixtures) {
+      const response = await session.client.callTool({ name: 'reliquary_training_task_get', arguments: { id: 'task-1' } });
+      const text = JSON.parse(response.content.find(item => item.type === 'text').text);
+      assert.deepEqual(response.structuredContent.data, fixture);
+      assert.deepEqual(text, fixture);
+      assert.equal(Object.hasOwn(response.structuredContent.data.result, 'steps'), Object.hasOwn(fixture.result, 'steps'));
+      assert.equal(Object.hasOwn(text.result, 'steps'), Object.hasOwn(fixture.result, 'steps'));
+    }
+    assert.equal(reads, 2);
+  } finally { await session.close(); }
+});
+
 test('authenticated HTTP transport works; token, Host and Origin gates fail closed', async () => {
   const config = loadConfig({ RELIQUARY_TRANSPORT: 'http', RELIQUARY_MCP_TOKEN: 't'.repeat(48) });
   const server = createHttpServer(config, () => buildServer(config));
