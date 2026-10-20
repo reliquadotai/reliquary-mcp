@@ -112,3 +112,9 @@ Generation request builders and JSON response validators come from the version-p
 CPU job builders, client and validators use the pinned 0.2.2 shared package. Its transport is injected through the existing connector's credential, disabled-write, redirect, response, timeout and admission controls. Upload receipts are checked against actual input bytes, reports against frozen artifact digests, and mutated responses against their original intent. Unknown outcomes preserve both the original idempotency key and reviewed revision. Existing generation contracts remain unchanged; training uses its separately scoped platform routes.
 
 Protocol references: [MCP specification](https://modelcontextprotocol.io/specification/2026-07-28), [official SDK](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v2.3.1), [HTTP serving](https://ts.sdk.modelcontextprotocol.io/v2/serving/http.html), [authorization](https://ts.sdk.modelcontextprotocol.io/v2/serving/authorization.html).
+
+### Test reports
+
+CI keeps a unit-test count summary for seven days, including failed runs.
+Generated reports stay in ignored `test-results/`; logs, credentials and raw
+response bodies are not uploaded. Maintained tests and fixtures remain versioned.

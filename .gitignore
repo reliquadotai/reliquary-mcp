@@ -13,3 +13,8 @@ coverage/
 *.private.json
 *.pem
 *.key
+
+/test-results/
+
+/coverage/
+*.private.*
