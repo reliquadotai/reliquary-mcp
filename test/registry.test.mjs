@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { z } from 'zod';
 import { operations } from '../dist/tools.js';
@@ -84,6 +85,54 @@ test('qualified training draft maps only the verified profile identities and all
   assert.throws(() => op('training_draft_create').build({ ...input, maxHours: 3 }));
   assert.throws(() => op('training_draft_create').build({ ...input, profile: { ...profile, gpuCount: 1 } }));
   assert.throws(() => op('training_draft_create').build({ ...input, profile: { ...profile, unexpected: true } }));
+});
+
+test('vision profiles keep the exact digest-pinned training draft contract', () => {
+  const pin = p => ({ ...p, digest: createHash('sha256').update(JSON.stringify(Object.fromEntries(
+    Object.entries(p).filter(([key]) => key !== 'digest').sort(([a], [b]) => a.localeCompare(b)),
+  ))).digest('hex') });
+  const vision = pin({ ...profile, datasetFormat: 'vision', method: 'grpo', maxSteps: 10_000, vision: {
+    schemaVersion: 1, processorRevision: 'f'.repeat(40), processorDigest: '1'.repeat(64), mode: 'timestamped_frames_v1',
+    maxFrames: 64, maxPixels: 4_194_304, maxSequenceLength: 32_768, task: 'football_events',
+  } });
+  const input = { name: 'Vision training', objective: 'Learn reviewed visual labels', profile: vision, datasetId: 'file-1', idempotencyKey: key };
+  const draft = op('training_draft_create').build(input).json.config;
+  assert.deepEqual(draft, { schemaVersion: 2, profileDigest: vision.digest, objective: input.objective,
+    environment: { id: vision.environmentId, version: vision.environmentVersion }, model: { id: vision.modelId }, dataset: { id: 'file-1' },
+    optimization: { method: 'grpo', maxSteps: 50 }, compute: { offerId: vision.offerId, gpuCount: 0, maxHours: 1, providerPolicy: 'private' } });
+  const changed = pin({ ...vision, vision: { ...vision.vision, processorDigest: '2'.repeat(64) } });
+  assert.notEqual(changed.digest, vision.digest);
+  assert.equal(op('training_draft_create').build({ ...input, profile: changed }).json.config.profileDigest, changed.digest);
+  assert.ok(op('training_draft_create').build({ ...input, profile: { ...vision, accelerator: 'GPU', gpuCount: 1 } }));
+  assert.ok(op('training_draft_create').build({ ...input, profile: { ...vision, method: 'sft', vision: { ...vision.vision, task: 'image_grounding', maxFrames: 1 } } }));
+  for (const change of [
+    { schemaVersion: 2 }, { processorRevision: 'main' }, { processorDigest: 'bad' }, { mode: 'unbound' }, { task: 'unknown' },
+    { maxFrames: 0 }, { maxFrames: 65 }, { maxPixels: 0 }, { maxPixels: 4_194_305 },
+    { maxSequenceLength: 31 }, { maxSequenceLength: 32_769 }, { task: 'image_grounding', maxFrames: 2 }, { unexpected: true },
+  ]) assert.throws(() => op('training_draft_create').build({ ...input, profile: { ...vision, vision: { ...vision.vision, ...change } } }));
+  for (const change of [{ vision: undefined }, { datasetFormat: 'instruction' }, { method: 'lora' }, { accelerator: 'GPU', gpuCount: 2 }, { maxSteps: 10_001 }])
+    assert.throws(() => op('training_draft_create').build({ ...input, profile: { ...vision, ...change } }));
+  const { vision: omitted, ...withoutVision } = vision;
+  assert.throws(() => op('training_draft_create').build({ ...input, profile: withoutVision }));
+  assert.ok(op('training_draft_create').build({ ...input, profile: { ...profile, accelerator: 'GPU', gpuCount: 8, maxSteps: 100_000 } }));
+  assert.throws(() => op('training_draft_create').build({ ...input, profile: { ...profile, vision: undefined } }));
+});
+
+test('vision uploads and imports use the training library while CPU validation stays text-only', () => {
+  const input = { name: 'reviewed.jsonl', format: 'vision', jsonl: '{"id":"reviewed-example"}\n', rightsConfirmed: true };
+  const upload = op('training_upload').build(input);
+  assert.equal(upload.path, '/api/v1/training/files');
+  assert.equal(upload.headers['X-Dataset-Format'], 'vision');
+  assert.equal(upload.body, input.jsonl);
+  assert.equal(upload.scope, 'training');
+  assert.throws(() => op('training_upload').build({ ...input, jsonl: 'x'.repeat(5 * 1024 * 1024 + 1) }));
+  const delivery = { kind: 'catalogue', orderId: 'order-1', deliveryId: 'delivery-1', fileName: 'reviewed.jsonl', name: input.name, format: 'vision', rightsConfirmed: true };
+  assert.deepEqual(op('training_import_delivery').build(delivery).json, delivery);
+  const requestKey = '11111111-1111-4111-8111-111111111111';
+  assert.throws(() => op('job_input_upload').build({ format: 'vision', content: input.jsonl, rightsConfirmed: true, approveExecution: true, idempotencyKey: requestKey }));
+  assert.throws(() => op('job_submit').build({ spec: { kind: 'dataset_validation', input: {
+    dataset_id: requestKey, sha256: 'a'.repeat(64), format: 'vision', size_bytes: 1,
+  }, limits: { deadline_seconds: 300, max_attempts: 1 } }, approveExecution: true, idempotencyKey: requestKey }));
 });
 
 test('quotes preserve reviewed inputs and backend sampling limits', () => {
