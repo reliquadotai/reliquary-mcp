@@ -74,3 +74,33 @@ test('request admission is bounded across clients and released after completion'
   const result = await new ApiClient(config, async () => Response.json({ ok: true })).request({ path: '/api/catalog' });
   assert.equal(result.ok, true);
 });
+
+test('downloads verify the requested range, byte count and response diagnostics', async () => {
+  const input = { path: '/api/resources', download: true, headers: { Range: 'bytes=10-14' } };
+  const api = (body, status, contentRange) => new ApiClient(config, async (_url, init) => {
+    assert.equal(init.headers.get('Range'), 'bytes=10-14');
+    return new Response(body, { status, headers: { 'X-Request-ID': 'range-request-1', 'Retry-After': '5',
+      ...(contentRange === undefined ? {} : { 'Content-Range': contentRange }) } });
+  });
+  const valid = await api('hello', 206, 'bytes 10-14/100').request(input);
+  assert.equal(valid.bytes, 5);
+  assert.equal(valid.contentRange, 'bytes 10-14/100');
+  assert.equal((await api('end', 206, 'bytes 10-12/13').request(input)).bytes, 3);
+  for (const [body, status, contentRange] of [
+    ['hello', 200], ['hello', 201], ['hello', 206],
+    ['hello', 206, 'bytes 0-4/100'], ['hello', 206, 'bytes 10-14/*'],
+    ['hello', 206, 'bytes 10-14/14'], ['hello', 206, 'bytes 10-13/100'],
+    ['hello', 206, 'bytes 10-15/100'], ['hello', 206, 'bytes 10-14/9007199254740992'],
+  ]) {
+    await assert.rejects(api(body, status, contentRange).request(input), error =>
+      error.code === 'invalid_file_range' && error.status === status && error.requestId === 'range-request-1' && error.retryAfterSeconds === 5);
+  }
+  await assert.rejects(api('longer', 206, 'bytes 10-15/100').request(input), error =>
+    error.code === 'response_too_large' && error.requestId === 'range-request-1');
+  const full = new ApiClient(config, async () => new Response('small'));
+  assert.equal((await full.request({ ...input, headers: { Range: 'bytes=0-4' } })).bytes, 5);
+  await assert.rejects(full.request({ ...input, headers: { Range: 'bytes=0-3' } }), { code: 'response_too_large' });
+  for (const value of ['bytes=0-', 'bytes=0-1,4-5', 'bytes=0-262144', 'bytes=2-1', 'bytes=-1-4']) {
+    await assert.rejects(full.request({ ...input, headers: { Range: value } }), { code: 'invalid_file_range' });
+  }
+});

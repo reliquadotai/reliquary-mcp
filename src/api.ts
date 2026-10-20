@@ -82,6 +82,14 @@ export class ApiClient {
     const headers = new Headers(input.headers);
     headers.delete('Cookie');
     headers.set('Accept', input.download ? '*/*' : 'application/json');
+    let downloadStart = 0, downloadEnd = DOWNLOAD_LIMIT - 1;
+    if (input.download) {
+      const requested = (headers.get('Range') ?? `bytes=0-${downloadEnd}`).match(/^bytes=(\d+)-(\d+)$/);
+      downloadStart = Number(requested?.[1]); downloadEnd = Number(requested?.[2]);
+      if (!Number.isSafeInteger(downloadStart) || !Number.isSafeInteger(downloadEnd) || downloadStart < 0 ||
+          downloadEnd < downloadStart || downloadEnd - downloadStart >= DOWNLOAD_LIMIT) throw new ApiError('invalid_file_range');
+      headers.set('Range', `bytes=${downloadStart}-${downloadEnd}`);
+    }
     if (input.scope) {
       const key = this.config.keys[input.scope];
       if (!key) throw new ApiError('credential_required');
@@ -110,7 +118,7 @@ export class ApiClient {
         throw new ApiError(mutating ? 'outcome_unknown' : 'redirect_refused', response.status, retryKey, revision, requestId, retryAfterSeconds);
       }
       let bytes: Buffer;
-      try { bytes = await boundedBody(response, input.download && response.ok ? DOWNLOAD_LIMIT : JSON_LIMIT); }
+      try { bytes = await boundedBody(response, input.download && response.ok ? downloadEnd - downloadStart + 1 : JSON_LIMIT); }
       catch (error) {
         if (mutating) throw new ApiError('outcome_unknown', response.status, retryKey, revision, requestId, retryAfterSeconds);
         if (error instanceof ApiError) throw new ApiError(error.code, response.status, retryKey, revision, requestId, retryAfterSeconds);
@@ -126,10 +134,21 @@ export class ApiClient {
         throw new ApiError(code, response.status, retryKey, revision, requestId, retryAfterSeconds);
       }
       if (input.download) {
+        const contentRange = response.headers.get('content-range');
+        if (response.status === 206) {
+          const match = contentRange?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
+          const start = Number(match?.[1]), end = Number(match?.[2]), total = Number(match?.[3]);
+          if (![start, end, total].every(Number.isSafeInteger) || start !== downloadStart || end < start ||
+              end > downloadEnd || end >= total || bytes.length !== end - start + 1) {
+            throw new ApiError('invalid_file_range', response.status, retryKey, revision, requestId, retryAfterSeconds);
+          }
+        } else if (response.status !== 200 || downloadStart !== 0) {
+          throw new ApiError('invalid_file_range', response.status, retryKey, revision, requestId, retryAfterSeconds);
+        }
         return {
           encoding: 'base64', data: bytes.toString('base64'), bytes: bytes.length,
           mimeType: response.headers.get('content-type') ?? 'application/octet-stream',
-          contentRange: response.headers.get('content-range'), etag: response.headers.get('etag'),
+          contentRange, etag: response.headers.get('etag'),
         };
       }
       try {
