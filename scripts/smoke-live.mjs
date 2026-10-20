@@ -5,13 +5,17 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 // Only public reads; never inherit production credentials or enable writes.
 const transport = new StdioClientTransport({
   command: process.execPath, args: ['dist/index.js'],
-  env: { RELIQUARY_API_URL: process.env.RELIQUARY_API_URL ?? 'https://app.reliqua.ai' },
+  env: process.env.RELIQUARY_API_URL ? { RELIQUARY_API_URL: process.env.RELIQUARY_API_URL } : {},
   stderr: 'pipe',
 });
 const client = new Client({ name: 'read-only-smoke', version: '1.0.0' });
 try {
   await client.connect(transport);
-  for (const name of ['reliquary_readiness', 'reliquary_catalog', 'reliquary_generation_catalog', 'reliquary_evaluation_catalog']) {
+  const connection = await client.callTool({ name: 'reliquary_connection', arguments: {} });
+  assert.equal(connection.structuredContent?.data.writesEnabled, false);
+  assert.deepEqual(connection.structuredContent?.data.credentialScopes, []);
+  process.stdout.write(`Public API: ${connection.structuredContent.data.apiOrigin}\n`);
+  for (const name of ['reliquary_health', 'reliquary_readiness', 'reliquary_catalog', 'reliquary_generation_catalog', 'reliquary_evaluation_catalog']) {
     const result = await client.callTool({ name, arguments: {} });
     assert(!result.isError, `${name} failed`);
     assert(result.structuredContent?.data);

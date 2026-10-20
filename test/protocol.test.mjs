@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { request, createServer } from 'node:http';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
@@ -29,6 +30,9 @@ test('MCP discovery hides writes and unavailable credential corridors', async ()
     assert(!tools.some(t => t.name === 'reliquary_training_start'));
     assert(!tools.some(t => t.name === 'reliquary_resources_list'));
     assert(tools.every(t => t.annotations.readOnlyHint));
+    const connection = await session.client.callTool({ name: 'reliquary_connection', arguments: {} });
+    assert.equal(connection.structuredContent.data.apiOrigin, 'https://api.reliqua.ai');
+    assert.equal(session.client.getServerVersion().version, JSON.parse(readFileSync(new URL('../package.json', import.meta.url))).version);
     const resource = await session.client.readResource({ uri: 'reliquary://workflows' });
     assert(resource.contents[0].text.includes('idempotencyKey'));
     const prompt = await session.client.getPrompt({ name: 'reliquary-workflow', arguments: { goal: 'Prepare a run' } });
