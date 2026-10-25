@@ -1,8 +1,8 @@
 {
   "name": "@reliquary/mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "description": "Account-scoped MCP interface for Reliquary",
   "type": "module",
   "engines": {
@@ -21,8 +21,8 @@
   "dependencies": {
     "@modelcontextprotocol/node": "2.1.1",
     "@modelcontextprotocol/server": "2.3.1",
-    "@reliquary/api": "file:vendor/api-client-0.2.2.tgz",
-    "zod": "4.3.6"
+    "@reliquary/api": "file:vendor/api-client-0.3.4.tgz",
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1",
