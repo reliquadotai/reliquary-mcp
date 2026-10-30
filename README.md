@@ -2,15 +2,15 @@
 
 ## Developer preview installation
 
-Download the pinned MCP 0.4.0 package from [the developer hub](https://app.reliqua.ai/developers) and verify it against the release manifest. Node.js 22 or later is required:
+Download the pinned MCP 0.5.0 package from [the developer hub](https://app.reliqua.ai/developers) and verify it against the release manifest. Node.js 22 or later is required:
 
 ```sh
-npm install --global ./reliquary-mcp-0.4.0.tgz
+npm install --global ./reliquary-mcp-0.5.0.tgz
 ```
 
 The tarball bundles its pinned API dependency and needs no private repository access. Configure a compatible stdio host with command `reliquary-mcp` and environment `RELIQUARY_ENABLE_WRITES=false`, then call `reliquary_connection`. Public discovery requires no API key; host PATH configuration may be necessary. [Setup guide](https://app.reliqua.ai/docs/agents/mcp).
 
-This preview retains the existing single-account protocol, fixed tool registry and disabled-by-default writes. API dependency compatibility is independent of the customer CLI package version. Existing scoped credentials, product grants and qualified execution remain authoritative. Install the separate official skills only when your assistant supports them; MCP works without the CLI.
+This preview retains the existing single-account protocol, fixed tool registry and disabled-by-default writes. API dependency compatibility is independent of the customer CLI package version. Existing scoped credentials, product grants and qualified execution remain authoritative. Discover the complete official workflow catalog with `reliquary_skills`; filter by `search`, `category` or exact `id`. The tool reads the installed catalog without credentials or upstream requests. Entries retain their documented access and qualification requirements. Install the separate official skills only when your assistant supports them; MCP works without the CLI.
 
 
 Private, account-scoped MCP server for Reliquary. One TypeScript process exposes validated customer operations through the existing platform API. The platform owns authentication, resource ownership, product grants, qualification, execution and billing.
@@ -63,7 +63,7 @@ Create keys in the Reliquary workspace. Keys expire and can be revoked there. Ke
 
 Training requires a platform release supporting scoped `/api/v1/training` routes. Verify `reliquary_training_capabilities` against the deployed API before uploading or preparing a run. A configured key and a registered tool are not evidence of upstream support or qualified capacity. If those routes are unavailable, use the existing web app for available training; this server never redirects a key request to a browser-session route. A read key cannot write even when local write registration is enabled.
 
-`reliquary_connection` lists the API origin, configured corridors, enabled tools and workflow rules. It does not validate keys or establish live product availability. Use `reliquary_inventory`, `reliquary_generation_catalog`, `reliquary_evaluation_catalog` and `reliquary_training_capabilities` for that. `/api/catalog` includes examples: an example entry is not executable capacity.
+`reliquary_connection` lists the API origin, configured corridors, enabled tools, installed skill-catalog version and workflow rules. The `reliquary://skills` JSON resource provides the full catalog and installation links; the `reliquary-skill` prompt helps choose instructions for a goal without installing or executing them. `reliquary_skills` accepts optional conjunctive `search`, `category` and `id` filters; unknown IDs or categories return an empty list. Catalog entries never enable an absent tool, grant access or establish live availability. It does not validate keys or establish live product availability. Use `reliquary_inventory`, `reliquary_generation_catalog`, `reliquary_evaluation_catalog` and `reliquary_training_capabilities` for that. `/api/catalog` includes examples: an example entry is not executable capacity.
 
 Account sign-in/key management, wallet/custody administration, funding, operator actions, worker provisioning and browser-only saved monitoring boards use their existing product interfaces. Public compute offers link to provider checkout; this server does not rent a GPU. Evaluation webhook-secret creation stays in the account's direct API flow.
 
@@ -122,7 +122,7 @@ When the platform changes, verify its deployed customer route, scope and payload
 
 Generation request builders and JSON response validators come from the version-pinned `@reliquary/api` package, vendored as a release tarball for reproducible installs without a registry credential. Catalog, quote, create, list, detail, cancel and download use the same reviewed contract as the web app. `src/tools.ts` holds the fixed operation registry with strict tool input schemas; `src/api.ts` validates generation envelopes after transport and retains the original retry key when a mutation response is malformed. `src/api.ts` handles fixed-origin requests, credential selection, byte/time/admission bounds, redirect refusal and safe failures. `src/server.ts` registers only the allowed operations and workflow context. `src/http.ts` and `src/index.ts` handle transport and lifecycle. Add a product operation by verifying its customer API contract, adding one schema/builder, and extending the relevant contract check. Keep execution and money decisions in the platform.
 
-CPU job builders, client and validators use the pinned 0.2.2 shared package. Its transport is injected through the existing connector's credential, disabled-write, redirect, response, timeout and admission controls. Upload receipts are checked against actual input bytes, reports against frozen artifact digests, and mutated responses against their original intent. Unknown outcomes preserve both the original idempotency key and reviewed revision. Existing generation contracts remain unchanged; training uses its separately scoped platform routes.
+CPU job builders, client and validators use the pinned 0.5.0 shared package. Its transport is injected through the existing connector's credential, disabled-write, redirect, response, timeout and admission controls. Upload receipts are checked against actual input bytes, reports against frozen artifact digests, and mutated responses against their original intent. Unknown outcomes preserve both the original idempotency key and reviewed revision. Existing generation contracts remain unchanged; training uses its separately scoped platform routes.
 
 Protocol references: [MCP specification](https://modelcontextprotocol.io/specification/2026-07-28), [official SDK](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v2.3.1), [HTTP serving](https://ts.sdk.modelcontextprotocol.io/v2/serving/http.html), [authorization](https://ts.sdk.modelcontextprotocol.io/v2/serving/authorization.html).
 
