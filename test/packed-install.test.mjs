@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { OFFICIAL_SKILLS } from '@reliquary/api';
 
 const run = (args, cwd) => new Promise((resolve, reject) => {
   const child = spawn('npm', args, { cwd });
@@ -40,12 +41,17 @@ test('pinned tarball installs without private repository access and exposes read
     await client.connect(transport);
     const result = await client.callTool({ name: 'reliquary_connection', arguments: {} });
     const connection = result.structuredContent.data;
-    assert.equal(connection.version, '0.4.0');
+    assert.equal(connection.version, '0.5.0');
     assert.equal(connection.writesEnabled, false);
     assert.deepEqual(connection.credentialScopes, []);
     assert.ok(connection.tools.includes('reliquary_compute_catalog'));
+    assert.ok(connection.tools.includes('reliquary_skills'));
     assert.ok(!connection.tools.includes('reliquary_training_start'));
     assert.ok(!connection.tools.includes('reliquary_job_submit'));
+    const skills = await client.callTool({ name: 'reliquary_skills', arguments: {} });
+    assert.deepEqual(skills.structuredContent.data.skills.map(skill => skill.id), OFFICIAL_SKILLS.map(skill => skill.id));
+    const resource = await client.readResource({ uri: 'reliquary://skills' });
+    assert.equal(JSON.parse(resource.contents[0].text).version, '0.5.0');
     await client.close();
   } finally { await transport?.close(); await rm(temp, { recursive: true, force: true }); }
 });
