@@ -1,5 +1,18 @@
 # Reliquary MCP
 
+## Developer preview installation
+
+Download the pinned MCP 0.4.0 package from [the developer hub](https://app.reliqua.ai/developers) and verify it against the release manifest. Node.js 22 or later is required:
+
+```sh
+npm install --global ./reliquary-mcp-0.4.0.tgz
+```
+
+The tarball bundles its pinned API dependency and needs no private repository access. Configure a compatible stdio host with command `reliquary-mcp` and environment `RELIQUARY_ENABLE_WRITES=false`, then call `reliquary_connection`. Public discovery requires no API key; host PATH configuration may be necessary. [Setup guide](https://app.reliqua.ai/docs/agents/mcp).
+
+This preview retains the existing single-account protocol, fixed tool registry and disabled-by-default writes. API dependency compatibility is independent of the customer CLI package version. Existing scoped credentials, product grants and qualified execution remain authoritative. Install the separate official skills only when your assistant supports them; MCP works without the CLI.
+
+
 Private, account-scoped MCP server for Reliquary. One TypeScript process exposes validated customer operations through the existing platform API. The platform owns authentication, resource ownership, product grants, qualification, execution and billing.
 
 The baseline supports stdio and authenticated Streamable HTTP at `/mcp`, including older MCP clients. It is a single-account connector: each process uses one account's credentials. Essential workflows are tools; resources and prompts provide optional guidance.
