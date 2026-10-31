@@ -1,19 +1,19 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { DEVELOPER_PREVIEW, OFFICIAL_SKILLS } from '@reliquary/api';
+import { DEVELOPER_PREVIEW, OFFICIAL_SKILLS, skillInstructionsPath } from '@reliquary/api';
 import { ApiClient, ApiError } from './api.js';
 import type { Config } from './config.js';
 import { operations } from './tools.js';
 import { workflowText } from './workflows.js';
 
-export const version = '0.5.0';
+export const version = '0.6.0';
 const outputSchema = z.object({ data: z.record(z.string(), z.unknown()) });
 const skillsCatalog = {
   schemaVersion: 1, version: DEVELOPER_PREVIEW.version,
   hub: 'https://app.reliqua.ai/developers',
   installation: {
     guide: 'https://app.reliqua.ai/docs/agents/overview',
-    manifest: 'https://app.reliqua.ai/developer-preview.json',
+    manifest: new URL(DEVELOPER_PREVIEW.releaseManifest, 'https://app.reliqua.ai').href,
     cli: 'reliqua skills install --directory DIRECTORY',
     individual: 'Download the selected instructions into a skill directory supported by your assistant.',
   },
@@ -21,7 +21,7 @@ const skillsCatalog = {
   total: OFFICIAL_SKILLS.length,
   skills: OFFICIAL_SKILLS.map(skill => ({ ...skill,
     docsUrl: new URL(skill.docs, 'https://app.reliqua.ai').href,
-    instructionsUrl: `https://app.reliqua.ai/skills/${skill.id}/SKILL.md`,
+    instructionsUrl: new URL(skillInstructionsPath(skill), 'https://app.reliqua.ai').href,
   })),
   notice: 'This is the installed official workflow catalog, not live execution availability. Skills do not grant account scopes, activate writes or qualify capacity. Read the connection tool list and current product capabilities before using a workflow. Installation requires user authorization.',
 };

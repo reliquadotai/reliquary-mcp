@@ -2,10 +2,10 @@
 
 ## Developer preview installation
 
-Download the pinned MCP 0.5.0 package from [the developer hub](https://app.reliqua.ai/developers) and verify it against the release manifest. Node.js 22 or later is required:
+Download the pinned MCP 0.6.0 package from [the developer hub](https://app.reliqua.ai/developers) and verify it against the release manifest. Node.js 22 or later is required:
 
 ```sh
-npm install --global ./reliquary-mcp-0.5.0.tgz
+npm install --global ./reliquary-mcp-0.6.0.tgz
 ```
 
 The tarball bundles its pinned API dependency and needs no private repository access. Configure a compatible stdio host with command `reliquary-mcp` and environment `RELIQUARY_ENABLE_WRITES=false`, then call `reliquary_connection`. Public discovery requires no API key; host PATH configuration may be necessary. [Setup guide](https://app.reliqua.ai/docs/agents/mcp).
@@ -48,6 +48,8 @@ For a client with a `mcpServers` configuration, set `command` to `node`, `args` 
   }
 }
 ```
+
+The installed 0.6 catalog includes public run selection, RL progress, held-out benchmarks, raw response-token composition and declared GPU participation through `reliquary_run_catalog` and `reliquary_run_monitor`. These are stored public observations, separate from owned training tasks. Instruction links are immutable and versioned; check the [release manifest](https://app.reliqua.ai/releases/0.6.0.json). Reconnect a running host after upgrading and verify the runtime-reported version. SDK transport tests do not qualify every assistant host.
 
 ## Access and coverage
 
@@ -100,9 +102,9 @@ Generate an independent random MCP token, for example with `openssl rand -hex 32
 The default bind is `127.0.0.1:3000`. For a container or external listener, set `RELIQUARY_HTTP_HOST=0.0.0.0` and `RELIQUARY_PUBLIC_URL=https://<your-host>/mcp`. Terminate TLS at a trusted reverse proxy; preserve the approved Host header, prevent access to the internal plaintext port, disable proxy request/authorization logging, and apply proxy rate limits. Only that exact browser origin is accepted. Non-browser clients may omit Origin.
 
 ```sh
-docker build -t reliquary-mcp:0.3.0 .
+docker build -t reliquary-mcp:0.6.0 .
 docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.3.0
+  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.6.0
 ```
 
 Configure the ignored environment file for HTTP and external container binding before this command. The image runs as an unprivileged user and contains no credentials. Dependencies and the base image digest are locked. Shutdown stops accepting requests and drains connections for up to five seconds. Upstream API requests time out after 30 seconds by default and have a process-wide admission limit of 32.
@@ -122,7 +124,7 @@ When the platform changes, verify its deployed customer route, scope and payload
 
 Generation request builders and JSON response validators come from the version-pinned `@reliquary/api` package, vendored as a release tarball for reproducible installs without a registry credential. Catalog, quote, create, list, detail, cancel and download use the same reviewed contract as the web app. `src/tools.ts` holds the fixed operation registry with strict tool input schemas; `src/api.ts` validates generation envelopes after transport and retains the original retry key when a mutation response is malformed. `src/api.ts` handles fixed-origin requests, credential selection, byte/time/admission bounds, redirect refusal and safe failures. `src/server.ts` registers only the allowed operations and workflow context. `src/http.ts` and `src/index.ts` handle transport and lifecycle. Add a product operation by verifying its customer API contract, adding one schema/builder, and extending the relevant contract check. Keep execution and money decisions in the platform.
 
-CPU job builders, client and validators use the pinned 0.5.0 shared package. Its transport is injected through the existing connector's credential, disabled-write, redirect, response, timeout and admission controls. Upload receipts are checked against actual input bytes, reports against frozen artifact digests, and mutated responses against their original intent. Unknown outcomes preserve both the original idempotency key and reviewed revision. Existing generation contracts remain unchanged; training uses its separately scoped platform routes.
+CPU job builders, client and validators use the pinned 0.6.0 shared package. Its transport is injected through the existing connector's credential, disabled-write, redirect, response, timeout and admission controls. Upload receipts are checked against actual input bytes, reports against frozen artifact digests, and mutated responses against their original intent. Unknown outcomes preserve both the original idempotency key and reviewed revision. Existing generation contracts remain unchanged; training uses its separately scoped platform routes.
 
 Protocol references: [MCP specification](https://modelcontextprotocol.io/specification/2026-07-28), [official SDK](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v2.3.1), [HTTP serving](https://ts.sdk.modelcontextprotocol.io/v2/serving/http.html), [authorization](https://ts.sdk.modelcontextprotocol.io/v2/serving/authorization.html).
 
