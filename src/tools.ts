@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { parseAffineEvaluationRequest } from '@reliquary/api/affine-pilot';
+import { nativeRepository, parseAffineEvaluationRequest } from '@reliquary/api/affine-pilot';
 import { generationRequests, type BatchQuoteInput, type GenerationOperation } from '@reliquary/api';
 import { jobRequests, type JobCreateInput, type JobControlInput, type JobInputUpload, type JobPageInput } from '@reliquary/api/jobs';
 
@@ -26,6 +26,7 @@ export type ApiRequest = {
   generationExpected?: { input?: BatchQuoteInput; id?: string };
   jobCall?: JobCall;
   jobProtocol?: boolean;
+  affineExpected?: Record<string, string | number>;
   affineResponse?: 'catalog' | 'review' | 'preparation' | 'prepared';
 };
 export type Operation = {
@@ -257,13 +258,13 @@ export const operations: Operation[] = [
   operation('affine_pilot_status', 'Read owned Affine assisted-pilot availability, finite operator window and preparation status. Availability does not authorize execution or establish official acceptance.', empty,
     () => ({ path: affinePreparations, affineResponse: 'catalog' }), 'training'),
   operation('affine_checkpoint_review', 'Review public ungated full MiMo-compatible 9B safetensors up to 20 GiB under fixed diagnostic4 policy. Resolve a reference to an immutable revision and review the returned policy, expiry and cost ceiling; this does not prepare or launch.', z.strictObject({ repository: affineRepository, reference: z.string().regex(/^[A-Za-z0-9][\w./-]{0,199}$/).refine(v => !v.includes('..')), sessionId: id, maxCostMicroUsd: affineCost }),
-    json => ({ method: 'POST', path: affinePreparations + '/review', json, affineResponse: 'review' }), 'training', { write: true }),
+    json => ({ method: 'POST', path: affinePreparations + '/review', json, affineResponse: 'review', affineExpected: { repository: nativeRepository(json.repository)!, sessionId: json.sessionId, maxCostMicroUsd: json.maxCostMicroUsd, ...(/^[a-f0-9]{40}$/.test(json.reference) ? { revision: json.reference } : {}) } }), 'training', { write: true }),
   operation('affine_checkpoint_prepare', 'Prepare exactly the reviewed immutable checkpoint and policy only after explicit approval. Requires at least 70 minutes remaining in the finite operator window; ceiling is USD 5.10. Preserve the same UUID requestId and all inputs after an unknown outcome; never retry automatically.', z.strictObject({ repository: affineRepository, revision: commit, sessionId: id, maxCostMicroUsd: affineCost, policyDigest: affineHash, approvePreparation: approved, requestId: z.uuid() }),
-    json => ({ method: 'POST', path: affinePreparations, json, headers: { 'Idempotency-Key': json.requestId }, affineResponse: 'preparation' }), 'training', { write: true, spend: true }),
+    json => ({ method: 'POST', path: affinePreparations, json, headers: { 'Idempotency-Key': json.requestId }, affineResponse: 'preparation', affineExpected: { repository: nativeRepository(json.repository)!, revision: json.revision, sessionId: json.sessionId, maxCostMicroUsd: json.maxCostMicroUsd, policyDigest: json.policyDigest } }), 'training', { write: true, spend: true }),
   operation('affine_preparation_get', 'Read one owned preparation. Ready exposes a profile digest; it does not imply a launched evaluation or official acceptance. Read again only on an explicit progress request.', z.strictObject({ id }),
-    ({ id }) => ({ path: affinePreparations + '/' + segment(id), affineResponse: 'preparation' }), 'training'),
+    ({ id }) => ({ path: affinePreparations + '/' + segment(id), affineResponse: 'preparation', affineExpected: { id } }), 'training'),
   operation('affine_evaluation_prepare', 'Build a frozen native evaluation request and exact draft configuration from the ready server-returned profile digest. This does not upload, save a draft or launch evaluation.', z.strictObject({ profileDigest: affineHash, maxHours: z.number().int().min(1).max(168), maxCostMicroUsd: affineCost }),
-    json => ({ method: 'POST', path: '/api/v1/training/affine-native-evaluation/prepare', json, affineResponse: 'prepared' }), 'training', { write: true }),
+    json => ({ method: 'POST', path: '/api/v1/training/affine-native-evaluation/prepare', json, affineResponse: 'prepared', affineExpected: json }), 'training', { write: true }),
   operation('affine_request_upload', 'Upload only the exact server-returned native evaluation request after confirming data rights. Preserve its pins and expiry. This creates a library file, not an execution.', z.strictObject({ request: affineRequest, rightsConfirmed: z.literal(true) }),
     ({ request }) => {
       parseAffineEvaluationRequest(request);

@@ -157,7 +157,10 @@ export class ApiClient {
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not_object');
         if (input.affineResponse) {
           const parsers = { catalog: parseNativePreparationCatalog, review: parseNativePreparationReview, preparation: parseNativePreparation, prepared: parseAffineEvaluationPrepared };
-          return parsers[input.affineResponse](parsed) as unknown as Record<string, unknown>;
+          const validated = parsers[input.affineResponse](parsed);
+          const bound = (input.affineResponse === 'prepared' ? (validated as ReturnType<typeof parseAffineEvaluationPrepared>).request : validated) as unknown as Record<string, unknown>;
+          if (Object.entries(input.affineExpected ?? {}).some(([key, value]) => bound[key] !== value)) throw new Error('affine_response_mismatch');
+          return validated as unknown as Record<string, unknown>;
         }
         return input.generationResponse
           ? parseGenerationResponse(input.generationResponse, parsed, 'key', input.generationExpected) as Record<string, unknown>
