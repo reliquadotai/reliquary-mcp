@@ -6,26 +6,30 @@ import type { Config } from './config.js';
 import { operations } from './tools.js';
 import { workflowText } from './workflows.js';
 
-export const version = '0.6.0';
+export const version = '0.7.0';
 const outputSchema = z.object({ data: z.record(z.string(), z.unknown()) });
-const skillsCatalog = {
-  schemaVersion: 1, version: DEVELOPER_PREVIEW.version,
-  hub: 'https://app.reliqua.ai/developers',
-  installation: {
-    guide: 'https://app.reliqua.ai/docs/agents/overview',
-    manifest: new URL(DEVELOPER_PREVIEW.releaseManifest, 'https://app.reliqua.ai').href,
-    cli: 'reliqua skills install --directory DIRECTORY',
-    individual: 'Download the selected instructions into a skill directory supported by your assistant.',
-  },
-  categories: [...new Set(OFFICIAL_SKILLS.map(skill => skill.category))],
-  total: OFFICIAL_SKILLS.length,
-  skills: OFFICIAL_SKILLS.map(skill => ({ ...skill,
-    docsUrl: new URL(skill.docs, 'https://app.reliqua.ai').href,
-    instructionsUrl: new URL(skillInstructionsPath(skill), 'https://app.reliqua.ai').href,
-  })),
-  notice: 'This is the installed official workflow catalog, not live execution availability. Skills do not grant account scopes, activate writes or qualify capacity. Read the connection tool list and current product capabilities before using a workflow. Installation requires user authorization.',
-};
+function skillsCatalogFor(apiOrigin: string) {
+  const docsOrigin = apiOrigin === 'https://api.reliqua.ai' ? 'https://app.reliqua.ai' : apiOrigin;
+  return {
+    schemaVersion: 1, version: DEVELOPER_PREVIEW.version,
+    hub: new URL('/developers', docsOrigin).href,
+    installation: {
+      guide: new URL('/docs/agents/overview', docsOrigin).href,
+      manifest: new URL(DEVELOPER_PREVIEW.releaseManifest, docsOrigin).href,
+      cli: 'reliqua skills install --directory DIRECTORY',
+      individual: 'Download the selected instructions into a skill directory supported by your assistant.',
+    },
+    categories: [...new Set(OFFICIAL_SKILLS.map(skill => skill.category))],
+    total: OFFICIAL_SKILLS.length,
+    skills: OFFICIAL_SKILLS.map(skill => ({ ...skill,
+      docsUrl: new URL(skill.docs, docsOrigin).href,
+      instructionsUrl: new URL(skillInstructionsPath(skill), docsOrigin).href,
+    })),
+    notice: 'This is the installed official workflow catalog, not live execution availability. Release and instruction URLs are configured references; discovery has not fetched or verified publication. Skills do not grant account scopes, activate writes or qualify capacity. Read the connection tool list and current product capabilities before using a workflow. Installation requires user authorization.',
+  };
+}
 export function buildServer(config: Config, api = new ApiClient(config)): McpServer {
+  const skillsCatalog = skillsCatalogFor(config.apiUrl);
   const available = operations.filter(op => (!op.scope || config.keys[op.scope]) && (!op.write || config.enableWrites));
   const connection = {
     version, transport: config.transport, apiOrigin: config.apiUrl, writesEnabled: config.enableWrites,

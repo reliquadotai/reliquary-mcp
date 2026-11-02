@@ -21,3 +21,5 @@ coverage/
 
 *.tgz
 !/vendor/api-client-0.6.0.tgz
+
+!/vendor/api-client-0.7.0.tgz

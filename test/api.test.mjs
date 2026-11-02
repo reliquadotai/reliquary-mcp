@@ -104,3 +104,45 @@ test('downloads verify the requested range, byte count and response diagnostics'
     await assert.rejects(full.request({ ...input, headers: { Range: value } }), { code: 'invalid_file_range' });
   }
 });
+
+test('Affine valid responses remain bound to reviewed inputs and requested identities', async () => {
+  const { operations } = await import('../dist/tools.js');
+  const { parseNativePreparationReview, parseNativePreparation, parseAffineEvaluationPrepared } = await import('@reliquary/api/affine-pilot');
+  const build = (name, input) => operations.find(op => op.name === 'reliquary_' + name).build(input);
+  const cfg = loadConfig({ RELIQUARY_TRAINING_KEY: key, RELIQUARY_ENABLE_WRITES: 'true' });
+  const review = { sessionId: 'session-1', repository: 'org/model', revision: 'a'.repeat(40), weightBytes: 100,
+    architecture: 'Qwen3_5ForConditionalGeneration', policyId: 'mimo-diagnostic4-v1', policyDigest: 'b'.repeat(64),
+    maxSeconds: 900, maxCostMicroUsd: 5_100_000, expiresAt: 4_000_000_000 };
+  const preparation = { ...review, id: 'preparation-1', state: 'queued', profileDigest: null, runId: null, error: null, createdAt: 1, updatedAt: 1 };
+  const reviewInput = { sessionId: review.sessionId, repository: 'https://huggingface.co/org/model/', reference: review.revision, maxCostMicroUsd: review.maxCostMicroUsd };
+  const prepareInput = { sessionId: review.sessionId, repository: reviewInput.repository, revision: review.revision, maxCostMicroUsd: review.maxCostMicroUsd,
+    policyDigest: review.policyDigest, approvePreparation: true, requestId: '11111111-1111-4111-8111-111111111111' };
+  const cases = [
+    ['affine_checkpoint_review', reviewInput, review, parseNativePreparationReview, [{ repository: 'other/model' }, { sessionId: 'session-2' }, { maxCostMicroUsd: 1 }, { revision: 'c'.repeat(40) }]],
+    ['affine_checkpoint_prepare', prepareInput, preparation, parseNativePreparation, [{ repository: 'other/model' }, { sessionId: 'session-2' }, { maxCostMicroUsd: 1 }, { revision: 'c'.repeat(40) }, { policyDigest: 'd'.repeat(64) }]],
+    ['affine_preparation_get', { id: preparation.id }, preparation, parseNativePreparation, [{ id: 'preparation-2' }]],
+  ];
+  for (const [name, input, valid, parse, changes] of cases) {
+    assert.deepEqual(await new ApiClient(cfg, async () => Response.json(valid)).request(build(name, input)), parse(valid));
+    for (const change of changes) {
+      const other = { ...valid, ...change };
+      parse(other); // The response is valid; its relationship to the request is wrong.
+      let calls = 0;
+      const api = new ApiClient(cfg, async () => { calls++; return Response.json(other); });
+      await assert.rejects(api.request(build(name, input)), { code: name === 'affine_preparation_get' ? 'invalid_response' : 'outcome_unknown',
+        ...(name === 'affine_checkpoint_prepare' ? { retryKey: prepareInput.requestId } : {}) });
+      assert.equal(calls, 1);
+    }
+  }
+  const evalInput = { profileDigest: 'e'.repeat(64), maxHours: 1, maxCostMicroUsd: 5_100_000 };
+  const prepared = request => ({ request, mode: 'operator-funded-pilot', configuration: { profileDigest: request.profileDigest,
+    affineNativeEvaluationRequest: request, optimization: { method: 'affine_native_evaluation' }, compute: { maxHours: request.maxHours }, submissionMode: 'operator_funded_pilot' } });
+  const request = { schema: 'affine-native-evaluation-request/v1', ...evalInput, jobDigest: 'f'.repeat(64), nativeJobExpiresAt: 4_000_000_000 };
+  const valid = prepared(request);
+  assert.deepEqual(await new ApiClient(cfg, async () => Response.json(valid)).request(build('affine_evaluation_prepare', evalInput)), parseAffineEvaluationPrepared(valid));
+  for (const change of [{ profileDigest: '1'.repeat(64) }, { maxHours: 2 }, { maxCostMicroUsd: 1 }]) {
+    const other = prepared({ ...request, ...change });
+    parseAffineEvaluationPrepared(other);
+    await assert.rejects(new ApiClient(cfg, async () => Response.json(other)).request(build('affine_evaluation_prepare', evalInput)), { code: 'outcome_unknown' });
+  }
+});

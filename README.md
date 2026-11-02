@@ -2,10 +2,10 @@
 
 ## Developer preview installation
 
-Download the pinned MCP 0.6.0 package from [the developer hub](https://app.reliqua.ai/developers) and verify it against the release manifest. Node.js 22 or later is required:
+MCP 0.7.0 is an isolated assisted-pilot candidate. Obtain its pinned package and release manifest from the explicitly selected pilot origin; this is not a production release claim. Node.js 22 or later is required:
 
 ```sh
-npm install --global ./reliquary-mcp-0.6.0.tgz
+npm install --global ./reliquary-mcp-0.7.0.tgz
 ```
 
 The tarball bundles its pinned API dependency and needs no private repository access. Configure a compatible stdio host with command `reliquary-mcp` and environment `RELIQUARY_ENABLE_WRITES=false`, then call `reliquary_connection`. Public discovery requires no API key; host PATH configuration may be necessary. [Setup guide](https://app.reliqua.ai/docs/agents/mcp).
@@ -49,7 +49,7 @@ For a client with a `mcpServers` configuration, set `command` to `node`, `args` 
 }
 ```
 
-The installed 0.6 catalog includes public run selection, RL progress, held-out benchmarks, raw response-token composition and declared GPU participation through `reliquary_run_catalog` and `reliquary_run_monitor`. These are stored public observations, separate from owned training tasks. Instruction links are immutable and versioned; check the [release manifest](https://app.reliqua.ai/releases/0.6.0.json). Reconnect a running host after upgrading and verify the runtime-reported version. SDK transport tests do not qualify every assistant host.
+The installed 0.6 catalog includes public run selection, RL progress, held-out benchmarks, raw response-token composition and declared GPU participation through `reliquary_run_catalog` and `reliquary_run_monitor`. These are stored public observations, separate from owned training tasks. Instruction links are immutable and versioned; check the release manifest on the selected origin. Reconnect a running host after upgrading and verify the runtime-reported version. SDK transport tests do not qualify every assistant host.
 
 ## Access and coverage
 
@@ -102,9 +102,9 @@ Generate an independent random MCP token, for example with `openssl rand -hex 32
 The default bind is `127.0.0.1:3000`. For a container or external listener, set `RELIQUARY_HTTP_HOST=0.0.0.0` and `RELIQUARY_PUBLIC_URL=https://<your-host>/mcp`. Terminate TLS at a trusted reverse proxy; preserve the approved Host header, prevent access to the internal plaintext port, disable proxy request/authorization logging, and apply proxy rate limits. Only that exact browser origin is accepted. Non-browser clients may omit Origin.
 
 ```sh
-docker build -t reliquary-mcp:0.6.0 .
+docker build -t reliquary-mcp:0.7.0 .
 docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.6.0
+  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.7.0
 ```
 
 Configure the ignored environment file for HTTP and external container binding before this command. The image runs as an unprivileged user and contains no credentials. Dependencies and the base image digest are locked. Shutdown stops accepting requests and drains connections for up to five seconds. Upstream API requests time out after 30 seconds by default and have a process-wide admission limit of 32.
@@ -124,7 +124,7 @@ When the platform changes, verify its deployed customer route, scope and payload
 
 Generation request builders and JSON response validators come from the version-pinned `@reliquary/api` package, vendored as a release tarball for reproducible installs without a registry credential. Catalog, quote, create, list, detail, cancel and download use the same reviewed contract as the web app. `src/tools.ts` holds the fixed operation registry with strict tool input schemas; `src/api.ts` validates generation envelopes after transport and retains the original retry key when a mutation response is malformed. `src/api.ts` handles fixed-origin requests, credential selection, byte/time/admission bounds, redirect refusal and safe failures. `src/server.ts` registers only the allowed operations and workflow context. `src/http.ts` and `src/index.ts` handle transport and lifecycle. Add a product operation by verifying its customer API contract, adding one schema/builder, and extending the relevant contract check. Keep execution and money decisions in the platform.
 
-CPU job builders, client and validators use the pinned 0.6.0 shared package. Its transport is injected through the existing connector's credential, disabled-write, redirect, response, timeout and admission controls. Upload receipts are checked against actual input bytes, reports against frozen artifact digests, and mutated responses against their original intent. Unknown outcomes preserve both the original idempotency key and reviewed revision. Existing generation contracts remain unchanged; training uses its separately scoped platform routes.
+CPU job builders, client and validators use the pinned 0.7.0 shared package. Its transport is injected through the existing connector's credential, disabled-write, redirect, response, timeout and admission controls. Upload receipts are checked against actual input bytes, reports against frozen artifact digests, and mutated responses against their original intent. Unknown outcomes preserve both the original idempotency key and reviewed revision. Existing generation contracts remain unchanged; training uses its separately scoped platform routes.
 
 Protocol references: [MCP specification](https://modelcontextprotocol.io/specification/2026-07-28), [official SDK](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v2.3.1), [HTTP serving](https://ts.sdk.modelcontextprotocol.io/v2/serving/http.html), [authorization](https://ts.sdk.modelcontextprotocol.io/v2/serving/authorization.html).
 
@@ -133,3 +133,13 @@ Protocol references: [MCP specification](https://modelcontextprotocol.io/specifi
 CI keeps a unit-test count summary for seven days, including failed runs.
 Generated reports stay in ignored `test-results/`; logs, credentials and raw
 response bodies are not uploaded. Maintained tests and fixtures remain versioned.
+
+## Affine assisted pilot
+
+The six `reliquary_affine_*` tools expose status, checkpoint review/preparation, preparation detail, frozen evaluation preparation and exact native-request upload through the existing training corridor. See the `/docs/agents/affine-pilot` on the selected origin and `reliquary://workflows`. Select the isolated API origin explicitly and configure separate `training:write` and `resources:write` keys; writes remain disabled by default. Wallet claims and request-window actions stay in the human browser. No cookies, administrator or operator authority is provided.
+
+The finite two-hour coordinator/operator window requires at least 70 minutes remaining before preparation. Eligible checkpoints are public ungated full MiMo-compatible 9B safetensors up to 20 GiB, under fixed four-diagnostic policy `mimo-diagnostic4-v1` and USD 5.10 maximum. Review the resolved revision, policy digest, cost and expiry before explicit preparation approval. Preserve the original UUID `requestId` in both the body and `Idempotency-Key` after an ambiguous result; do not retry automatically.
+
+When ready, prepare the exact native request, upload it after rights confirmation, then save the returned configuration plus `dataset: {id: uploadedFileId}` through `reliquary_resource_create`. The generic training draft builder cannot express the native evaluation method. Use the existing quote, explicitly approved start, task and artifact tools. A signed receipt records frozen execution metadata; check its signature and digests. Diagnostic completion does not establish official Affine acceptance, native parity, rewards, promotion, chain transactions or arbitrary model support.
+
+For an isolated pilot, set `RELIQUARY_API_URL` to the exact pilot origin. Discovery resolves documentation and immutable skill links against that origin. These are configured references, not fetched or verified publication evidence; the default production API continues to use the production documentation origin. Do not use pilot packages or credentials as evidence of production availability.
