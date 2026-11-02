@@ -1,6 +1,8 @@
+import { parseAffineBatchPrepared } from '@reliquary/api/affine-batches';
 import type { Config } from './config.js';
 import type { ApiRequest } from './tools.js';
 import { parseGenerationResponse } from '@reliquary/api';
+import { parseNativePreparationCatalog, parseNativePreparationReview, parseNativePreparation, parseAffineEvaluationPrepared } from '@reliquary/api/affine-pilot';
 import { createJobsClient, JobApiError } from '@reliquary/api/jobs';
 
 const JSON_LIMIT = 4 * 1024 * 1024;
@@ -154,6 +156,14 @@ export class ApiClient {
       try {
         const parsed: unknown = JSON.parse(bytes.toString('utf8'));
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not_object');
+        if (input.affineResponse) {
+          const parsers = { catalog: parseNativePreparationCatalog, review: parseNativePreparationReview, preparation: parseNativePreparation, prepared: parseAffineEvaluationPrepared, batchPrepared: parseAffineBatchPrepared };
+          const validated = parsers[input.affineResponse](parsed);
+          const bound = (['prepared', 'batchPrepared'].includes(input.affineResponse) ? (validated as ReturnType<typeof parseAffineEvaluationPrepared>).request : validated) as unknown as Record<string, unknown>;
+          if (Object.entries(input.affineExpected ?? {}).some(([key, value]) => bound[key] !== value)) throw new Error('affine_response_mismatch');
+          if (input.affineResponse === 'batchPrepared' && Number(bound.jobExpiresAt) <= Date.now() / 1000) throw new Error('expired_batch_preparation');
+          return validated as unknown as Record<string, unknown>;
+        }
         return input.generationResponse
           ? parseGenerationResponse(input.generationResponse, parsed, 'key', input.generationExpected) as Record<string, unknown>
           : parsed as Record<string, unknown>;

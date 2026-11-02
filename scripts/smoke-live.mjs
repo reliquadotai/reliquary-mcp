@@ -14,8 +14,12 @@ try {
   const connection = await client.callTool({ name: 'reliquary_connection', arguments: {} });
   assert.equal(connection.structuredContent?.data.writesEnabled, false);
   assert.deepEqual(connection.structuredContent?.data.credentialScopes, []);
+  const skills = await client.callTool({ name: 'reliquary_skills', arguments: {} });
+  assert(!skills.isError);
+  assert.equal(skills.structuredContent?.data.count, connection.structuredContent.data.skills.count);
   process.stdout.write(`Public API: ${connection.structuredContent.data.apiOrigin}\n`);
-  for (const name of ['reliquary_health', 'reliquary_readiness', 'reliquary_catalog', 'reliquary_generation_catalog', 'reliquary_evaluation_catalog']) {
+  process.stdout.write('reliquary_skills: passed\n');
+  for (const name of ['reliquary_run_catalog', 'reliquary_run_monitor', 'reliquary_health', 'reliquary_readiness', 'reliquary_catalog', 'reliquary_generation_catalog', 'reliquary_evaluation_catalog']) {
     const result = await client.callTool({ name, arguments: {} });
     assert(!result.isError, `${name} failed`);
     assert(result.structuredContent?.data);
