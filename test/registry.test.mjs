@@ -28,6 +28,7 @@ test('registry schemas are strict, convertible and named uniquely', () => {
 
 test('spending and destructive operations require explicit approval', () => {
   const examples = {
+    affine_checkpoint_prepare: { repository: 'org/model', revision: 'a'.repeat(40), sessionId: 'session-1', maxCostMicroUsd: 5_100_000, policyDigest: 'b'.repeat(64), requestId: '11111111-1111-4111-8111-111111111111' },
     generation_order: { quote_id: 'quote-1', idempotencyKey: key }, evaluation_order: { quote_id: 'quote-1', idempotencyKey: key },
     training_start: { draftId: 'draft-1', datasetId: 'file-1', revision: 1, idempotencyKey: key },
     resource_archive: { id: 'draft-1', revision: 1 }, generation_cancel: { id: 'order-1' }, evaluation_cancel: { id: 'eval-1' },
@@ -38,8 +39,9 @@ test('spending and destructive operations require explicit approval', () => {
     const input = examples[operation.name.replace('reliquary_', '')];
     assert.ok(input, operation.name);
     assert.throws(() => operation.build(input));
-    assert.throws(() => operation.build({ ...input, approveExecution: false }));
-    assert.ok(operation.build({ ...input, approveExecution: true }));
+    const approval = operation.name === 'reliquary_affine_checkpoint_prepare' ? 'approvePreparation' : 'approveExecution';
+    assert.throws(() => operation.build({ ...input, [approval]: false }));
+    assert.ok(operation.build({ ...input, [approval]: true }));
   }
 });
 
@@ -175,4 +177,33 @@ test('monitoring accepts only published views and filters', () => {
   assert.throws(() => op('monitoring_analytics').build({ view: '../private' }));
   assert.throws(() => op('training_upload').build({ name: 'data.jsonl', format: 'instruction', jsonl: '{}', rightsConfirmed: false }));
   assert.match(workflowText, /reliquary_training_draft_create/);
+});
+
+test('Affine preparation pins reviewed approval and stable body/header identity', () => {
+  const review = { repository: 'org/model', reference: 'main', sessionId: 'session-1', maxCostMicroUsd: 5_100_000 };
+  assert.equal(op('affine_checkpoint_review').build(review).path, '/api/v1/training/affine-native-evaluation/preparations/review');
+  for (const reference of ['../main', 'a..b', '/main', 'x'.repeat(201)]) assert.throws(() => op('affine_checkpoint_review').build({ ...review, reference }));
+  const input = { repository: review.repository, revision: 'a'.repeat(40), sessionId: review.sessionId, maxCostMicroUsd: review.maxCostMicroUsd,
+    policyDigest: 'b'.repeat(64), requestId: '11111111-1111-4111-8111-111111111111', approvePreparation: true };
+  const built = op('affine_checkpoint_prepare').build(input);
+  assert.deepEqual(built.json, input);
+  assert.equal(built.headers['Idempotency-Key'], input.requestId);
+  assert.equal(built.scope, 'training');
+  for (const change of [{ approvePreparation: false }, { approvePreparation: undefined }, { requestId: undefined }, { requestId: 'bad' }, { policyDigest: 'bad' }, { revision: 'main' }, { maxCostMicroUsd: 5_100_001 }])
+    assert.throws(() => op('affine_checkpoint_prepare').build({ ...input, ...change }));
+});
+
+test('Affine upload preserves exact native request bytes and rejects extra fields', () => {
+  const request = { schema: 'affine-native-evaluation-request/v1', profileDigest: 'a'.repeat(64), jobDigest: 'b'.repeat(64), maxHours: 1, maxCostMicroUsd: 5_100_000, nativeJobExpiresAt: 4_000_000_000 };
+  const built = op('affine_request_upload').build({ request, rightsConfirmed: true });
+  assert.equal(built.body, JSON.stringify(request) + '\n');
+  assert.equal(built.path, '/api/v1/training/files');
+  assert.equal(built.headers['Content-Type'], 'application/x-ndjson');
+  assert.equal(built.headers['X-Dataset-Format'], 'affine_native_evaluation_request');
+  assert.equal(built.headers['X-Data-Authorized'], 'true');
+  assert.equal(built.headers['X-Filename'], 'native-evaluation-request.jsonl');
+  for (const change of [{ rightsConfirmed: false }, { request: { ...request, extra: true } }, { request: { ...request, maxCostMicroUsd: 5_100_001 } }, { request: { ...request, schema: 'other' } }])
+    assert.throws(() => op('affine_request_upload').build({ request, rightsConfirmed: true, ...change }));
+  assert.match(workflowText, /Do not use reliquary_training_draft_create/);
+  assert.match(workflowText, /official Affine acceptance/);
 });

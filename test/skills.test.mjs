@@ -4,11 +4,11 @@ import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { DEVELOPER_PREVIEW, OFFICIAL_SKILLS, skillInstructionsPath } from '@reliquary/api';
 import { loadConfig } from '../dist/config.js';
-import { buildServer } from '../dist/server.js';
+import { buildServer, affineLocalToolNames } from '../dist/server.js';
 import { operations } from '../dist/tools.js';
 
 test('official recipes cover the customer tool registry without inventing tool names', () => {
-  const registered = new Set(['reliquary_connection', 'reliquary_skills', ...operations.map(operation => operation.name)]);
+  const registered = new Set(['reliquary_connection', 'reliquary_skills', ...affineLocalToolNames, ...operations.map(operation => operation.name)]);
   const documented = new Set(OFFICIAL_SKILLS.flatMap(skill => skill.mcpTools));
   for (const name of registered) assert(documented.has(name), `Missing official skill coverage for ${name}`);
   for (const name of documented) assert(registered.has(name), `Unknown tool in official skill catalog: ${name}`);
@@ -36,7 +36,7 @@ test('official skills are discoverable without credentials, upstream calls or wr
     assert.equal(all.total, OFFICIAL_SKILLS.length);
     assert.deepEqual(all.skills.map(skill => skill.id), OFFICIAL_SKILLS.map(skill => skill.id));
     assert(all.skills.some(skill => skill.access === 'approval-required'));
-    assert(all.skills.every(skill => skill.docsUrl.startsWith('https://app.reliqua.ai/docs/') &&
+    assert(all.skills.every(skill => skill.docsUrl === new URL(skill.docs, 'https://app.reliqua.ai').href &&
       skill.instructionsUrl === new URL(skillInstructionsPath(skill), 'https://app.reliqua.ai').href));
     assert.match(all.notice, /not live execution availability/);
     const selected = OFFICIAL_SKILLS.find(skill => skill.id === 'reliquary-compute');
@@ -74,4 +74,20 @@ test('public run tools keep bounded selectors and never request credential scope
   for (const run of ['', '.', '..', 'x/y', 'x?key=secret', 'x'.repeat(129)]) assert.throws(() => monitor.build({ run }));
   assert.throws(() => catalog.build({ run: 'current' }));
   assert.throws(() => monitor.build({ url: 'https://example.invalid' }));
+});
+
+test('isolated origin keeps instruction and artifact discovery on that exact origin', async () => {
+  const origin = 'https://pilot.example.invalid';
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = buildServer(loadConfig({ RELIQUARY_API_URL: origin }));
+  const client = new Client({ name: 'isolated-discovery-test', version: '1.0.0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const result = (await client.callTool({ name: 'reliquary_skills', arguments: {} })).structuredContent.data;
+    assert.equal(new URL(result.hub).origin, origin);
+    assert.equal(new URL(result.installation.guide).origin, origin);
+    assert.equal(new URL(result.installation.manifest).origin, origin);
+    assert(result.skills.every(skill => new URL(skill.docsUrl).href === new URL(skill.docs, origin).href && new URL(skill.instructionsUrl).origin === origin));
+  } finally { await client.close(); await server.close(); }
 });
