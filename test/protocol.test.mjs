@@ -261,3 +261,85 @@ test('Affine status validates server metadata before presenting availability', a
     assert.equal((await call()).structuredContent.data.error.code, 'invalid_response');
   } finally { await session.close(); }
 });
+
+test('local batch review and plan run without credentials, writes or any upstream calls', async () => {
+  let calls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { calls++; throw new Error('No fetch permitted'); };
+  const session = await memory(loadConfig({}), { request: async () => { calls++; throw new Error('No upstream permitted'); } });
+  const batchJson = ' {"version":"affine-batch-v1","hotkey":"fixture-owner","groups":[{"prompt":"Question","rollouts":[{"output":"Answer","reward":1}]}]}\n';
+  const miningJson = JSON.stringify({epoch:'fixture-1',checkpoint:'a'.repeat(64),training:{batch_cap:{max_tasks_per_miner:125,max_rollouts_per_miner:1000}},batch_file:{formats:['affine-batch-v1','affine-batch-v2'],train:{fields:{lr:{min:1.25e-7,max:1e-6,default:5e-7},kl:{min:0.005,max:0.1,default:0.02}}}}});
+  try {
+    const {tools}=await session.client.listTools();
+    for(const name of ['reliquary_affine_batch_review','reliquary_affine_batch_plan']) assert.deepEqual(tools.find(t=>t.name===name).annotations,{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false});
+    const args={batchJson,miningJson,hotkey:'fixture-owner'};
+    const call=(name,input)=>session.client.callTool({name:'reliquary_affine_batch_'+name,arguments:input});
+    const review=await call('review',args);assert(!review.isError);assert.equal(review.structuredContent.data.prompts,1);assert.equal(review.structuredContent.data.rollouts,1);assert.equal(review.structuredContent.data.tokenValidation,'not_run');
+    const plan=await call('plan',{...args,head:'b'.repeat(64),reference:'c'.repeat(64),master:'bf16-bootstrap',seed:42,prior:'env-average',trainingResultAt:21600,lastGreenDecidedAt:0});assert(!plan.isError);assert.equal(plan.structuredContent.data.schema,'affine-batch-plan/v1');assert.equal(plan.structuredContent.data.batch.sha256,review.structuredContent.data.sha256);assert.equal(plan.structuredContent.data.comparison.barZ,0.625);assert.equal(plan.structuredContent.data.liveParity,false);
+    for(const change of [{batchJson:'x'.repeat(1024*1024+1)},{batchJson:'not JSON'},{path:'/tmp/batch.json'},{apiKey:'not-permitted'},{batchJson:batchJson.replace('"reward":1','"reward":true')}])assert((await call('review',{...args,...change})).isError);
+    assert.equal(calls,0);
+  } finally {globalThis.fetch = originalFetch; await session.close();}
+});
+
+test('hosted batch preparation and metadata upload reuse scoped gated tools', async () => {
+  const request = { schema: 'affine-batch-request/v1', profileDigest: 'a'.repeat(64), jobDigest: 'b'.repeat(64), maxHours: 4, maxCostMicroUsd: 25_000_000, jobExpiresAt: 4_000_000_000 };
+  const prepared = request => ({ request, mode: 'operator-funded-pilot', configuration: {
+    schemaVersion: 2, profileDigest: request.profileDigest,
+    objective: 'Run one approved native MiMo GRPO step and parent/candidate comparison.',
+    environment: { id: 'fixture', version: '1' }, model: { id: 'fixture/model' },
+    optimization: { method: 'affine_batch', maxSteps: 1 },
+    compute: { offerId: 'fixture', gpuCount: 1, maxHours: request.maxHours, providerPolicy: 'private' },
+    affineBatchRequest: request, submissionMode: 'operator_funded_pilot',
+  } });
+  const input = { profileDigest: request.profileDigest, maxHours: request.maxHours, maxCostMicroUsd: request.maxCostMicroUsd };
+  const readonly = await memory(loadConfig({ RELIQUARY_TRAINING_KEY: env.RELIQUARY_TRAINING_KEY }));
+  try {
+    const { tools } = await readonly.client.listTools();
+    assert(!tools.some(t => t.name === 'reliquary_affine_batch_prepare'));
+    assert(!tools.some(t => t.name === 'reliquary_training_upload'));
+    assert(tools.some(t => t.name === 'reliquary_training_task_get'));
+  } finally { await readonly.close(); }
+  const calls = [];
+  let responseRequest = request;
+  const cfg = loadConfig({ ...env, RELIQUARY_ENABLE_WRITES: 'true' });
+  const session = await memory(cfg, new ApiClient(cfg, async (url, init) => {
+    calls.push({ url, init });
+    return Response.json(url.pathname.endsWith('/prepare') ? prepared(responseRequest) : { file: { id: 'file-fixture' } });
+  }));
+  try {
+    const prepare = () => session.client.callTool({ name: 'reliquary_affine_batch_prepare', arguments: input });
+    assert.deepEqual((await prepare()).structuredContent.data, prepared(request));
+    assert.equal(calls[0].url.pathname, '/api/v1/training/affine-batch/prepare');
+    assert.deepEqual(JSON.parse(calls[0].init.body), input);
+    assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer ' + env.RELIQUARY_TRAINING_KEY);
+    assert.equal(calls[0].init.credentials, 'omit');
+    for (const changed of [{ profileDigest: 'c'.repeat(64) }, { maxHours: 3 }, { maxCostMicroUsd: 1 }, { jobExpiresAt: 1 }]) {
+      responseRequest = { ...request, ...changed };
+      const result = await prepare();
+      assert.equal(result.structuredContent.data.error.code, 'outcome_unknown');
+    }
+    assert.equal(calls.length, 5, 'No automatic replay');
+    const upload = args => session.client.callTool({ name: 'reliquary_training_upload', arguments: {
+      name: 'affine-batch-request.jsonl', format: 'affine_batch_request', jsonl: JSON.stringify(request) + '\n', rightsConfirmed: true, ...args,
+    } });
+    const before = calls.length;
+    for (const args of [
+      { rightsConfirmed: false }, { jsonl: JSON.stringify({ ...request, extra: true }) },
+      { jsonl: JSON.stringify({ ...request, jobDigest: 'invalid' }) }, { jsonl: '[{"prompt":"raw batch"}]' },
+      { jsonl: JSON.stringify(request) + '\n' + JSON.stringify(request) },
+      { jsonl: ' '.repeat(4096) + JSON.stringify(request) },
+    ]) assert((await upload(args)).isError);
+    assert.equal(calls.length, before, 'Invalid metadata must not reach upstream');
+    assert.equal((await upload({})).structuredContent.data.file.id, 'file-fixture');
+    const last = calls.at(-1);
+    assert.equal(last.url.pathname, '/api/v1/training/files');
+    assert.equal(last.init.headers.get('X-Dataset-Format'), 'affine_batch_request');
+    assert.equal(last.init.headers.get('X-Data-Authorized'), 'true');
+    assert.equal(last.init.body, JSON.stringify(request) + '\n');
+    const start = await session.client.callTool({ name: 'reliquary_training_start', arguments: {
+      draftId: 'draft-fixture', datasetId: 'file-fixture', revision: 1, approveExecution: false, idempotencyKey: 'stable-batch-start-1234',
+    } });
+    assert(start.isError);
+    assert.equal(calls.length, before + 1, 'Preparation/upload cannot bypass start approval');
+  } finally { await session.close(); }
+});
