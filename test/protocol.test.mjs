@@ -208,3 +208,56 @@ test('both transports accept the full 5 MiB file cap inside an escaped MCP envel
     assert.equal(uploads, 2);
   } finally { backend.closeAllConnections(); await new Promise(resolve => backend.close(resolve)); }
 });
+
+test('Affine discovery gates writes; ambiguous preparation preserves original UUID without retry', async () => {
+  for (const configured of [{}, { RELIQUARY_TRAINING_KEY: env.RELIQUARY_TRAINING_KEY }]) {
+    const session = await memory(loadConfig(configured));
+    try {
+      const { tools } = await session.client.listTools();
+      assert.equal(tools.some(t => t.name === 'reliquary_affine_pilot_status'), Boolean(configured.RELIQUARY_TRAINING_KEY));
+      assert(!tools.some(t => t.name === 'reliquary_affine_checkpoint_prepare'));
+      assert(!tools.some(t => t.name === 'reliquary_affine_checkpoint_review'));
+      assert(!tools.some(t => t.name === 'reliquary_affine_evaluation_prepare'));
+      assert(!tools.some(t => t.name === 'reliquary_affine_request_upload'));
+    } finally { await session.close(); }
+  }
+  const calls = [];
+  const config = loadConfig({ ...env, RELIQUARY_ENABLE_WRITES: 'true' });
+  const session = await memory(config, new ApiClient(config, async (url, init) => {
+    calls.push({ url, init }); throw new Error('unknown transport outcome');
+  }));
+  try {
+    const input = { repository: 'org/model', revision: 'a'.repeat(40), sessionId: 'session-1', maxCostMicroUsd: 5_100_000,
+      policyDigest: 'b'.repeat(64), requestId: '11111111-1111-4111-8111-111111111111', approvePreparation: true };
+    const call = args => session.client.callTool({ name: 'reliquary_affine_checkpoint_prepare', arguments: args });
+    assert((await call({ ...input, approvePreparation: false })).isError);
+    assert.equal(calls.length, 0);
+    const result = await call(input);
+    assert.equal(result.structuredContent.data.error.code, 'outcome_unknown');
+    assert.equal(result.structuredContent.data.error.idempotencyKey, input.requestId);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url.pathname, '/api/v1/training/affine-native-evaluation/preparations');
+    assert.equal(calls[0].init.headers.get('Idempotency-Key'), input.requestId);
+    assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer ' + env.RELIQUARY_TRAINING_KEY);
+    assert.equal(calls[0].init.credentials, 'omit');
+    assert.deepEqual(JSON.parse(calls[0].init.body), input);
+    await call(input);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].init.body, calls[1].init.body);
+    assert.equal(calls[0].init.headers.get('Idempotency-Key'), calls[1].init.headers.get('Idempotency-Key'));
+  } finally { await session.close(); }
+});
+
+test('Affine status validates server metadata before presenting availability', async () => {
+  const config = loadConfig({ RELIQUARY_TRAINING_KEY: env.RELIQUARY_TRAINING_KEY });
+  const fixtures = [
+    { available: false, reason: 'Unavailable', sessionId: null, windowEndsAt: null, preparations: [] },
+    { available: true, reason: null, sessionId: null, windowEndsAt: null, preparations: [] },
+  ];
+  const session = await memory(config, new ApiClient(config, async () => Response.json(fixtures.shift())));
+  try {
+    const call = () => session.client.callTool({ name: 'reliquary_affine_pilot_status', arguments: {} });
+    assert.equal((await call()).structuredContent.data.available, false);
+    assert.equal((await call()).structuredContent.data.error.code, 'invalid_response');
+  } finally { await session.close(); }
+});

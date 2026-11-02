@@ -75,3 +75,19 @@ test('public run tools keep bounded selectors and never request credential scope
   assert.throws(() => catalog.build({ run: 'current' }));
   assert.throws(() => monitor.build({ url: 'https://example.invalid' }));
 });
+
+test('isolated origin keeps instruction and artifact discovery on that exact origin', async () => {
+  const origin = 'https://pilot.example.invalid';
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = buildServer(loadConfig({ RELIQUARY_API_URL: origin }));
+  const client = new Client({ name: 'isolated-discovery-test', version: '1.0.0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const result = (await client.callTool({ name: 'reliquary_skills', arguments: {} })).structuredContent.data;
+    assert.equal(new URL(result.hub).origin, origin);
+    assert.equal(new URL(result.installation.guide).origin, origin);
+    assert.equal(new URL(result.installation.manifest).origin, origin);
+    assert(result.skills.every(skill => new URL(skill.docsUrl).origin === origin && new URL(skill.instructionsUrl).origin === origin));
+  } finally { await client.close(); await server.close(); }
+});

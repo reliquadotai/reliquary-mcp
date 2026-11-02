@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseAffineEvaluationRequest } from '@reliquary/api/affine-pilot';
 import { generationRequests, type BatchQuoteInput, type GenerationOperation } from '@reliquary/api';
 import { jobRequests, type JobCreateInput, type JobControlInput, type JobInputUpload, type JobPageInput } from '@reliquary/api/jobs';
 
@@ -25,6 +26,7 @@ export type ApiRequest = {
   generationExpected?: { input?: BatchQuoteInput; id?: string };
   jobCall?: JobCall;
   jobProtocol?: boolean;
+  affineResponse?: 'catalog' | 'review' | 'preparation' | 'prepared';
 };
 export type Operation = {
   name: string;
@@ -76,6 +78,15 @@ const trainingDraft = z.strictObject({ name, objective: z.string().trim().min(1)
   datasetId: resourceId, maxSteps: z.number().int().min(50).max(100_000).default(50), maxHours: z.number().int().min(1).max(168).default(1),
   budgetUsd: z.number().min(1).max(1_000_000).optional(), parentTaskId: id.optional(), idempotencyKey: key,
 }).refine(v => v.maxSteps <= v.profile.maxSteps && v.maxHours <= v.profile.maxHours, 'Requested steps and hours must fit the selected qualified profile.');
+const affineHash = z.string().regex(/^[a-f0-9]{64}$/);
+const affineRepository = z.string().trim().regex(/^(?:https:\/\/huggingface\.co\/)?[A-Za-z0-9][\w.-]{0,95}\/[A-Za-z0-9][\w.-]{0,95}\/?$/).refine(v => !v.includes('..') && (v.startsWith('https://huggingface.co/') || !v.endsWith('/')));
+const affineCost = z.number().int().min(1).max(5_100_000);
+const affineRequest = z.strictObject({
+  schema: z.literal('affine-native-evaluation-request/v1'), profileDigest: affineHash, jobDigest: affineHash,
+  maxHours: z.number().int().min(1).max(168), maxCostMicroUsd: affineCost,
+  nativeJobExpiresAt: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+});
+const affinePreparations = '/api/v1/training/affine-native-evaluation/preparations';
 const sampling = {
   temperature: z.number().min(0).max(2).optional(),
   top_p: z.number().min(0.01).max(1).optional(),
@@ -242,6 +253,25 @@ export const operations: Operation[] = [
     args => ({ path: '/api/v1/evaluations/' + segment(args.id) + '/files/' + segment(args.fileName), headers: range(args), download: true }), 'evaluations'),
   operation('evaluation_balance', 'Read service-credit balance and ledger entries using the evaluation credential.', empty,
     () => ({ path: '/api/v1/balance' }), 'evaluations'),
+
+  operation('affine_pilot_status', 'Read owned Affine assisted-pilot availability, finite operator window and preparation status. Availability does not authorize execution or establish official acceptance.', empty,
+    () => ({ path: affinePreparations, affineResponse: 'catalog' }), 'training'),
+  operation('affine_checkpoint_review', 'Review public ungated full MiMo-compatible 9B safetensors up to 20 GiB under fixed diagnostic4 policy. Resolve a reference to an immutable revision and review the returned policy, expiry and cost ceiling; this does not prepare or launch.', z.strictObject({ repository: affineRepository, reference: z.string().regex(/^[A-Za-z0-9][\w./-]{0,199}$/).refine(v => !v.includes('..')), sessionId: id, maxCostMicroUsd: affineCost }),
+    json => ({ method: 'POST', path: affinePreparations + '/review', json, affineResponse: 'review' }), 'training', { write: true }),
+  operation('affine_checkpoint_prepare', 'Prepare exactly the reviewed immutable checkpoint and policy only after explicit approval. Requires at least 70 minutes remaining in the finite operator window; ceiling is USD 5.10. Preserve the same UUID requestId and all inputs after an unknown outcome; never retry automatically.', z.strictObject({ repository: affineRepository, revision: commit, sessionId: id, maxCostMicroUsd: affineCost, policyDigest: affineHash, approvePreparation: approved, requestId: z.uuid() }),
+    json => ({ method: 'POST', path: affinePreparations, json, headers: { 'Idempotency-Key': json.requestId }, affineResponse: 'preparation' }), 'training', { write: true, spend: true }),
+  operation('affine_preparation_get', 'Read one owned preparation. Ready exposes a profile digest; it does not imply a launched evaluation or official acceptance. Read again only on an explicit progress request.', z.strictObject({ id }),
+    ({ id }) => ({ path: affinePreparations + '/' + segment(id), affineResponse: 'preparation' }), 'training'),
+  operation('affine_evaluation_prepare', 'Build a frozen native evaluation request and exact draft configuration from the ready server-returned profile digest. This does not upload, save a draft or launch evaluation.', z.strictObject({ profileDigest: affineHash, maxHours: z.number().int().min(1).max(168), maxCostMicroUsd: affineCost }),
+    json => ({ method: 'POST', path: '/api/v1/training/affine-native-evaluation/prepare', json, affineResponse: 'prepared' }), 'training', { write: true }),
+  operation('affine_request_upload', 'Upload only the exact server-returned native evaluation request after confirming data rights. Preserve its pins and expiry. This creates a library file, not an execution.', z.strictObject({ request: affineRequest, rightsConfirmed: z.literal(true) }),
+    ({ request }) => {
+      parseAffineEvaluationRequest(request);
+      return { method: 'POST', path: '/api/v1/training/files', body: JSON.stringify(request) + '\n', headers: {
+        'Content-Type': 'application/x-ndjson', 'X-Filename': 'native-evaluation-request.jsonl',
+        'X-Dataset-Format': 'affine_native_evaluation_request', 'X-Data-Authorized': 'true',
+      } };
+    }, 'training', { write: true }),
 
   operation('training_capabilities', 'Read account-specific training availability, billing mode, qualified runtime profiles and upload permission. Use these exact approved profile fields when constructing a training draft.', empty,
     () => ({ path: '/api/v1/training/capabilities' }), 'training'),
