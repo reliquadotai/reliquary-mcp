@@ -1,12 +1,14 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { reviewAffineBatch, planAffineBatch } from '@reliquary/api/affine-batches';
 import { DEVELOPER_PREVIEW, OFFICIAL_SKILLS, skillInstructionsPath } from '@reliquary/api';
 import { ApiClient, ApiError } from './api.js';
 import type { Config } from './config.js';
 import { operations } from './tools.js';
 import { workflowText } from './workflows.js';
 
-export const version = '0.7.0';
+export const version = '0.8.0';
+export const affineLocalToolNames = ['reliquary_affine_batch_review', 'reliquary_affine_batch_plan'] as const;
 const outputSchema = z.object({ data: z.record(z.string(), z.unknown()) });
 function skillsCatalogFor(apiOrigin: string) {
   const docsOrigin = apiOrigin === 'https://api.reliqua.ai' ? 'https://app.reliqua.ai' : apiOrigin;
@@ -33,7 +35,7 @@ export function buildServer(config: Config, api = new ApiClient(config)): McpSer
   const available = operations.filter(op => (!op.scope || config.keys[op.scope]) && (!op.write || config.enableWrites));
   const connection = {
     version, transport: config.transport, apiOrigin: config.apiUrl, writesEnabled: config.enableWrites,
-    credentialScopes: Object.keys(config.keys), tools: ['reliquary_skills', ...available.map(op => op.name)],
+    credentialScopes: Object.keys(config.keys), tools: ['reliquary_skills', ...affineLocalToolNames, ...available.map(op => op.name)],
     accountMode: 'single-account',
     skills: { version: skillsCatalog.version, count: skillsCatalog.total, resource: 'reliquary://skills', hub: skillsCatalog.hub },
     workflows: workflowText,
@@ -62,6 +64,30 @@ export function buildServer(config: Config, api = new ApiClient(config)): McpSer
     const data = { ...skillsCatalog, count: skills.length, skills };
     return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: { data } };
   });
+  const inline = z.string().min(1).refine(v => Buffer.byteLength(v) <= 1024 * 1024, 'Inline JSON must fit in 1 MiB.');
+  const batchFields = { batchJson: inline, miningJson: inline, hotkey: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) };
+  const planFields = { head: z.string().regex(/^[a-f0-9]{64}$/), reference: z.string().regex(/^[a-f0-9]{64}$/),
+    master: z.enum(['provided', 'bf16-bootstrap']), seed: z.number().int().min(0).max(0xffffffff), prior: z.enum(['provided', 'env-average']),
+    trainingResultAt: z.number().nonnegative(), lastGreenDecidedAt: z.number().nonnegative() };
+  for (const [index, toolName] of affineLocalToolNames.entries()) {
+    server.registerTool(toolName, {
+      description: index === 0 ? 'Locally review inline official Affine v1/v2 batch JSON and raw mining.json (each at most 1 MiB). Returns structure, prefix cap counts and exact byte hashes. Full official tokenizer validation remains not_run. No network, paths, credentials, upload or execution.'
+        : 'Prepare an input-bound portable plan for official tokenizer validation, one GRPO step and parent/candidate comparison. Uses pinned official kit and explicit seed, frozen clock, prior and independent descriptor digests. Returns placeholder argv only; never executes or establishes parity.',
+      inputSchema: index === 0 ? z.strictObject(batchFields) : z.strictObject({ ...batchFields, ...planFields }), outputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ batchJson, miningJson, hotkey, ...plan }) => {
+      try {
+        const bytes = new TextEncoder().encode(batchJson), mining = new TextEncoder().encode(miningJson);
+        const data = index === 0 ? await reviewAffineBatch(bytes, hotkey, mining)
+          : await planAffineBatch(bytes, mining, { hotkey, ...plan } as Parameters<typeof planAffineBatch>[2]);
+        return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: { data } };
+      } catch (error) {
+        const code = error instanceof Error && /^[a-z_]{1,80}$/.test(error.message) ? error.message : 'invalid_affine_batch';
+        const data = { error: { code } };
+        return { isError: true, content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: { data } };
+      }
+    });
+  }
   for (const op of available) {
     server.registerTool(op.name, {
       description: op.description, inputSchema: op.schema, outputSchema,

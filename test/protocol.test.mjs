@@ -261,3 +261,22 @@ test('Affine status validates server metadata before presenting availability', a
     assert.equal((await call()).structuredContent.data.error.code, 'invalid_response');
   } finally { await session.close(); }
 });
+
+test('local batch review and plan run without credentials, writes or any upstream calls', async () => {
+  let calls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { calls++; throw new Error('No fetch permitted'); };
+  const session = await memory(loadConfig({}), { request: async () => { calls++; throw new Error('No upstream permitted'); } });
+  const batchJson = ' {"version":"affine-batch-v1","hotkey":"fixture-owner","groups":[{"prompt":"Question","rollouts":[{"output":"Answer","reward":1}]}]}\n';
+  const miningJson = JSON.stringify({epoch:'fixture-1',checkpoint:'a'.repeat(64),training:{batch_cap:{max_tasks_per_miner:125,max_rollouts_per_miner:1000}},batch_file:{formats:['affine-batch-v1','affine-batch-v2'],train:{fields:{lr:{min:1.25e-7,max:1e-6,default:5e-7},kl:{min:0.005,max:0.1,default:0.02}}}}});
+  try {
+    const {tools}=await session.client.listTools();
+    for(const name of ['reliquary_affine_batch_review','reliquary_affine_batch_plan']) assert.deepEqual(tools.find(t=>t.name===name).annotations,{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false});
+    const args={batchJson,miningJson,hotkey:'fixture-owner'};
+    const call=(name,input)=>session.client.callTool({name:'reliquary_affine_batch_'+name,arguments:input});
+    const review=await call('review',args);assert(!review.isError);assert.equal(review.structuredContent.data.prompts,1);assert.equal(review.structuredContent.data.rollouts,1);assert.equal(review.structuredContent.data.tokenValidation,'not_run');
+    const plan=await call('plan',{...args,head:'b'.repeat(64),reference:'c'.repeat(64),master:'bf16-bootstrap',seed:42,prior:'env-average',trainingResultAt:21600,lastGreenDecidedAt:0});assert(!plan.isError);assert.equal(plan.structuredContent.data.schema,'affine-batch-plan/v1');assert.equal(plan.structuredContent.data.batch.sha256,review.structuredContent.data.sha256);assert.equal(plan.structuredContent.data.comparison.barZ,0.625);assert.equal(plan.structuredContent.data.liveParity,false);
+    for(const change of [{batchJson:'x'.repeat(1024*1024+1)},{batchJson:'not JSON'},{path:'/tmp/batch.json'},{apiKey:'not-permitted'},{batchJson:batchJson.replace('"reward":1','"reward":true')}])assert((await call('review',{...args,...change})).isError);
+    assert.equal(calls,0);
+  } finally {globalThis.fetch = originalFetch; await session.close();}
+});
