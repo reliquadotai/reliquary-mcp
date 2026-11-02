@@ -6,9 +6,10 @@ import { DEVELOPER_PREVIEW, OFFICIAL_SKILLS, skillInstructionsPath } from '@reli
 import { loadConfig } from '../dist/config.js';
 import { buildServer } from '../dist/server.js';
 import { operations } from '../dist/tools.js';
+import { batchTools } from '../dist/batch.js';
 
 test('official recipes cover the customer tool registry without inventing tool names', () => {
-  const registered = new Set(['reliquary_connection', 'reliquary_skills', ...operations.map(operation => operation.name)]);
+  const registered = new Set(['reliquary_connection', 'reliquary_skills', ...operations.map(operation => operation.name), ...batchTools.map(tool => tool.name)]);
   const documented = new Set(OFFICIAL_SKILLS.flatMap(skill => skill.mcpTools));
   for (const name of registered) assert(documented.has(name), `Missing official skill coverage for ${name}`);
   for (const name of documented) assert(registered.has(name), `Unknown tool in official skill catalog: ${name}`);

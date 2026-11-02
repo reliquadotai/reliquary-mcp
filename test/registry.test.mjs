@@ -29,6 +29,7 @@ test('registry schemas are strict, convertible and named uniquely', () => {
 test('spending and destructive operations require explicit approval', () => {
   const examples = {
     generation_order: { quote_id: 'quote-1', idempotencyKey: key }, evaluation_order: { quote_id: 'quote-1', idempotencyKey: key },
+    batch_order: { quoteId: 'quote-1', idempotencyKey: key },
     training_start: { draftId: 'draft-1', datasetId: 'file-1', revision: 1, idempotencyKey: key },
     resource_archive: { id: 'draft-1', revision: 1 }, generation_cancel: { id: 'order-1' }, evaluation_cancel: { id: 'eval-1' },
     training_cancel: { id: 'task-1' }, training_file_archive: { id: 'file-1' },

@@ -5,8 +5,9 @@ import { ApiClient, ApiError } from './api.js';
 import type { Config } from './config.js';
 import { operations } from './tools.js';
 import { workflowText } from './workflows.js';
+import { availableBatchTools, registerBatchTools, type BatchToolDeps } from './batch.js';
 
-export const version = '0.6.0';
+export const version = '0.7.0';
 const outputSchema = z.object({ data: z.record(z.string(), z.unknown()) });
 const skillsCatalog = {
   schemaVersion: 1, version: DEVELOPER_PREVIEW.version,
@@ -25,11 +26,11 @@ const skillsCatalog = {
   })),
   notice: 'This is the installed official workflow catalog, not live execution availability. Skills do not grant account scopes, activate writes or qualify capacity. Read the connection tool list and current product capabilities before using a workflow. Installation requires user authorization.',
 };
-export function buildServer(config: Config, api = new ApiClient(config)): McpServer {
+export function buildServer(config: Config, api = new ApiClient(config), batchDeps: BatchToolDeps = {}): McpServer {
   const available = operations.filter(op => (!op.scope || config.keys[op.scope]) && (!op.write || config.enableWrites));
   const connection = {
     version, transport: config.transport, apiOrigin: config.apiUrl, writesEnabled: config.enableWrites,
-    credentialScopes: Object.keys(config.keys), tools: ['reliquary_skills', ...available.map(op => op.name)],
+    credentialScopes: Object.keys(config.keys), tools: ['reliquary_skills', ...available.map(op => op.name), ...availableBatchTools(config).map(tool => tool.name)],
     accountMode: 'single-account',
     skills: { version: skillsCatalog.version, count: skillsCatalog.total, resource: 'reliquary://skills', hub: skillsCatalog.hub },
     workflows: workflowText,
@@ -73,6 +74,7 @@ export function buildServer(config: Config, api = new ApiClient(config)): McpSer
       }
     });
   }
+  registerBatchTools(server, config, api, batchDeps);
   server.registerResource('workflow-guide', 'reliquary://workflows', { description: 'Supported customer workflows and execution rules', mimeType: 'text/plain' }, uri => ({
     contents: [{ uri: uri.href, mimeType: 'text/plain', text: workflowText }],
   }));
