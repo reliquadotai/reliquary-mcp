@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { parseAffineBatchRequest } from '@reliquary/api/affine-batches';
+import { nativeRepository, parseAffineEvaluationRequest } from '@reliquary/api/affine-pilot';
 import { batchFileRequests, generationRequests, type BatchQuoteInput, type GenerationOperation } from '@reliquary/api';
 import { jobRequests, type JobCreateInput, type JobControlInput, type JobInputUpload, type JobPageInput } from '@reliquary/api/jobs';
 
@@ -25,6 +27,8 @@ export type ApiRequest = {
   generationExpected?: { input?: BatchQuoteInput; id?: string };
   jobCall?: JobCall;
   jobProtocol?: boolean;
+  affineExpected?: Record<string, string | number>;
+  affineResponse?: 'catalog' | 'review' | 'preparation' | 'prepared' | 'batchPrepared';
 };
 export type Operation = {
   name: string;
@@ -76,6 +80,15 @@ const trainingDraft = z.strictObject({ name, objective: z.string().trim().min(1)
   datasetId: resourceId, maxSteps: z.number().int().min(50).max(100_000).default(50), maxHours: z.number().int().min(1).max(168).default(1),
   budgetUsd: z.number().min(1).max(1_000_000).optional(), parentTaskId: id.optional(), idempotencyKey: key,
 }).refine(v => v.maxSteps <= v.profile.maxSteps && v.maxHours <= v.profile.maxHours, 'Requested steps and hours must fit the selected qualified profile.');
+const affineHash = z.string().regex(/^[a-f0-9]{64}$/);
+const affineRepository = z.string().trim().regex(/^(?:https:\/\/huggingface\.co\/)?[A-Za-z0-9][\w.-]{0,95}\/[A-Za-z0-9][\w.-]{0,95}\/?$/).refine(v => !v.includes('..') && (v.startsWith('https://huggingface.co/') || !v.endsWith('/')));
+const affineCost = z.number().int().min(1).max(5_100_000);
+const affineRequest = z.strictObject({
+  schema: z.literal('affine-native-evaluation-request/v1'), profileDigest: affineHash, jobDigest: affineHash,
+  maxHours: z.number().int().min(1).max(168), maxCostMicroUsd: affineCost,
+  nativeJobExpiresAt: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+});
+const affinePreparations = '/api/v1/training/affine-native-evaluation/preparations';
 const sampling = {
   temperature: z.number().min(0).max(2).optional(),
   top_p: z.number().min(0.01).max(1).optional(),
@@ -256,11 +269,36 @@ export const operations: Operation[] = [
   operation('evaluation_balance', 'Read service-credit balance and ledger entries using the evaluation credential.', empty,
     () => ({ path: '/api/v1/balance' }), 'evaluations'),
 
+  operation('affine_pilot_status', 'Read owned Affine assisted-pilot availability, finite operator window and preparation status. Availability does not authorize execution or establish official acceptance.', empty,
+    () => ({ path: affinePreparations, affineResponse: 'catalog' }), 'training'),
+  operation('affine_checkpoint_review', 'Review public ungated full MiMo-compatible 9B safetensors up to 20 GiB under fixed diagnostic4 policy. Resolve a reference to an immutable revision and review the returned policy, expiry and cost ceiling; this does not prepare or launch.', z.strictObject({ repository: affineRepository, reference: z.string().regex(/^[A-Za-z0-9][\w./-]{0,199}$/).refine(v => !v.includes('..')), sessionId: id, maxCostMicroUsd: affineCost }),
+    json => ({ method: 'POST', path: affinePreparations + '/review', json, affineResponse: 'review', affineExpected: { repository: nativeRepository(json.repository)!, sessionId: json.sessionId, maxCostMicroUsd: json.maxCostMicroUsd, ...(/^[a-f0-9]{40}$/.test(json.reference) ? { revision: json.reference } : {}) } }), 'training', { write: true }),
+  operation('affine_checkpoint_prepare', 'Prepare exactly the reviewed immutable checkpoint and policy only after explicit approval. Requires at least 70 minutes remaining in the finite operator window; ceiling is USD 5.10. Preserve the same UUID requestId and all inputs after an unknown outcome; never retry automatically.', z.strictObject({ repository: affineRepository, revision: commit, sessionId: id, maxCostMicroUsd: affineCost, policyDigest: affineHash, approvePreparation: approved, requestId: z.uuid() }),
+    json => ({ method: 'POST', path: affinePreparations, json, headers: { 'Idempotency-Key': json.requestId }, affineResponse: 'preparation', affineExpected: { repository: nativeRepository(json.repository)!, revision: json.revision, sessionId: json.sessionId, maxCostMicroUsd: json.maxCostMicroUsd, policyDigest: json.policyDigest } }), 'training', { write: true, spend: true }),
+  operation('affine_preparation_get', 'Read one owned preparation. Ready exposes a profile digest; it does not imply a launched evaluation or official acceptance. Read again only on an explicit progress request.', z.strictObject({ id }),
+    ({ id }) => ({ path: affinePreparations + '/' + segment(id), affineResponse: 'preparation', affineExpected: { id } }), 'training'),
+  operation('affine_batch_prepare', 'Prepare request metadata and exact draft configuration for one fresh owned qualified Affine batch profile with explicitly reviewed hours and cost. Computes nothing, does not upload, save a draft or start execution. Check current capabilities first.', z.strictObject({ profileDigest: affineHash, maxHours: z.number().int().min(1).max(168), maxCostMicroUsd: z.number().int().min(1).max(1_000_000_000_000) }),
+    json => ({ method: 'POST', path: '/api/v1/training/affine-batch/prepare', json, affineResponse: 'batchPrepared', affineExpected: json }), 'training', { write: true }),
+  operation('affine_evaluation_prepare', 'Build a frozen native evaluation request and exact draft configuration from the ready server-returned profile digest. This does not upload, save a draft or launch evaluation.', z.strictObject({ profileDigest: affineHash, maxHours: z.number().int().min(1).max(168), maxCostMicroUsd: affineCost }),
+    json => ({ method: 'POST', path: '/api/v1/training/affine-native-evaluation/prepare', json, affineResponse: 'prepared', affineExpected: json }), 'training', { write: true }),
+  operation('affine_request_upload', 'Upload only the exact server-returned native evaluation request after confirming data rights. Preserve its pins and expiry. This creates a library file, not an execution.', z.strictObject({ request: affineRequest, rightsConfirmed: z.literal(true) }),
+    ({ request }) => {
+      parseAffineEvaluationRequest(request);
+      return { method: 'POST', path: '/api/v1/training/files', body: JSON.stringify(request) + '\n', headers: {
+        'Content-Type': 'application/x-ndjson', 'X-Filename': 'native-evaluation-request.jsonl',
+        'X-Dataset-Format': 'affine_native_evaluation_request', 'X-Data-Authorized': 'true',
+      } };
+    }, 'training', { write: true }),
+
   operation('training_capabilities', 'Read account-specific training availability, billing mode, qualified runtime profiles and upload permission. Use these exact approved profile fields when constructing a training draft.', empty,
     () => ({ path: '/api/v1/training/capabilities' }), 'training'),
   operation('training_files', 'List owned private training dataset files, optionally archived. File IDs refer to the account library, separate from generated delivery IDs.', z.strictObject({ archived: z.boolean().optional() }),
     args => ({ path: query('/api/v1/training/files', args) }), 'training'),
-  operation('training_upload', 'Upload owned JSONL up to 5 MiB after confirming data rights. Text formats: instruction uses prompt/response, preference prompt/chosen/rejected, corpus text; nonempty fields up to 32,000 characters and up to 10,000 rows. Vision uses 1-256 reviewed examples with id, source_id, split, task, prompt, annotation_complete:true, is_verified_negative, target and media. Supported tasks are football_events and image_grounding; Each frame has exactly data_base64 (RGB/RGBA 8-bit non-interlaced PNG), sha256, width, height (1-2048) and pts_us. For image_grounding, media is {kind:image,frames:[one frame],clip_start_us:0,duration_us:0}; target is {type:grounding,items:[{label,box:[x1,y1,x2,y2]}]}, with integer box coordinates 0-1000 and positive area. For football_events, media is {kind:frames,frames,clip_start_us,duration_us,score_fps:25}; target is {type:soccer_action,items:[{frame,action,confidence}]}. Clips are at most 60 seconds; frame timestamps increase within the clip; target frames use 25 fps and confidence is 0-1. Actions: pass, pass_received, recovery, tackle, interception, ball_out_of_play, clearance, take_on, substitution, block, aerial_duel, shot, save, foul, goal. Split is train, validation or test; is_verified_negative is true exactly when target.items is empty. The platform validates exact fields, labels, source/frame split isolation, media and limits. Vision quotes and launches also require profile-compatible bounds and separate train and held-out sources. Uploading does not train.', z.strictObject({ name: datasetName, format: trainingFormat, jsonl: z.string().min(1).refine(v => Buffer.byteLength(v) <= 5 * 1024 * 1024, 'JSONL must fit in 5 MiB.'), rightsConfirmed: z.literal(true) }),
+  operation('training_upload', 'For affine_batch_request, upload only the exact server-prepared request metadata (at most 4 KiB); raw batch data is not accepted. Upload owned JSONL up to 5 MiB after confirming data rights. Text formats: instruction uses prompt/response, preference prompt/chosen/rejected, corpus text; nonempty fields up to 32,000 characters and up to 10,000 rows. Vision uses 1-256 reviewed examples with id, source_id, split, task, prompt, annotation_complete:true, is_verified_negative, target and media. Supported tasks are football_events and image_grounding; Each frame has exactly data_base64 (RGB/RGBA 8-bit non-interlaced PNG), sha256, width, height (1-2048) and pts_us. For image_grounding, media is {kind:image,frames:[one frame],clip_start_us:0,duration_us:0}; target is {type:grounding,items:[{label,box:[x1,y1,x2,y2]}]}, with integer box coordinates 0-1000 and positive area. For football_events, media is {kind:frames,frames,clip_start_us,duration_us,score_fps:25}; target is {type:soccer_action,items:[{frame,action,confidence}]}. Clips are at most 60 seconds; frame timestamps increase within the clip; target frames use 25 fps and confidence is 0-1. Actions: pass, pass_received, recovery, tackle, interception, ball_out_of_play, clearance, take_on, substitution, block, aerial_duel, shot, save, foul, goal. Split is train, validation or test; is_verified_negative is true exactly when target.items is empty. The platform validates exact fields, labels, source/frame split isolation, media and limits. Vision quotes and launches also require profile-compatible bounds and separate train and held-out sources. Uploading does not train.', z.strictObject({ name: datasetName, format: trainingFormat.or(z.literal('affine_batch_request')), jsonl: z.string().min(1).refine(v => Buffer.byteLength(v) <= 5 * 1024 * 1024, 'JSONL must fit in 5 MiB.'), rightsConfirmed: z.literal(true) }).refine(v => {
+      if (v.format !== 'affine_batch_request') return true;
+      if (Buffer.byteLength(v.jsonl) > 4096) return false;
+      try { parseAffineBatchRequest(JSON.parse(v.jsonl)); return true; } catch { return false; }
+    }, 'Use one complete server-prepared Affine batch request of at most 4 KiB.'),
     ({ name, format, jsonl }) => ({ method: 'POST', path: '/api/v1/training/files', body: jsonl, headers: { 'Content-Type': 'application/x-ndjson', 'X-Filename': segment(name), 'X-Dataset-Format': format, 'X-Data-Authorized': 'true' } }), 'training', { write: true }),
   operation('training_import_delivery', 'Import a verified delivered generation JSONL shard into the owned training library after confirmation of data rights. The platform validates ownership, integrity, size and format. A vision import must already satisfy the reviewed vision JSONL contract; imports do not convert text or media.', z.strictObject({ kind: z.enum(['catalogue', 'pinned']), orderId: id, deliveryId, fileName: z.string().regex(/^[\w.()-]{1,200}\.jsonl$/i), name: datasetName, format: trainingFormat, rightsConfirmed: z.literal(true) }),
     json => ({ method: 'POST', path: '/api/v1/training/files/from-order', json }), 'training', { write: true }),
