@@ -14,6 +14,12 @@ export class ApiError extends Error {
   }
 }
 
+export async function withRequestSlot<T>(operation: () => Promise<T>): Promise<T> {
+  if (activeRequests >= 32) throw new ApiError('server_busy');
+  activeRequests++;
+  try { return await operation(); } finally { activeRequests--; }
+}
+
 async function boundedBody(response: Response, limit: number): Promise<Buffer> {
   if (Number(response.headers.get('content-length')) > limit) {
     await response.body?.cancel();
@@ -104,73 +110,72 @@ export class ApiClient {
     if (body !== undefined && Buffer.byteLength(body) > requestLimit) throw new ApiError('request_too_large');
     const timeout = AbortSignal.timeout(this.config.timeoutMs);
     const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    // ponytail: process-wide cap; add per-account scheduling only for shared hosting.
-    if (activeRequests >= 32) throw new ApiError('server_busy');
-    activeRequests++;
-    let requestId: string | undefined, retryAfterSeconds: number | undefined;
-    try {
-      const response = await this.fetcher(url, {
-        method, headers, ...(body === undefined ? {} : { body }), redirect: 'manual', signal: requestSignal, credentials: 'omit',
-      });
-      const reference = response.headers.get('X-Request-ID'), retry = response.headers.get('Retry-After');
-      if (reference && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(reference)) requestId = reference;
-      if (retry && /^\d{1,5}$/.test(retry) && Number(retry) <= 86400) retryAfterSeconds = Number(retry);
-      if (response.status >= 300 && response.status < 400) {
-        await response.body?.cancel();
-        throw new ApiError(mutating ? 'outcome_unknown' : 'redirect_refused', response.status, retryKey, revision, requestId, retryAfterSeconds);
-      }
-      let bytes: Buffer;
-      try { bytes = await boundedBody(response, input.download && response.ok ? downloadEnd - downloadStart + 1 : JSON_LIMIT); }
-      catch (error) {
-        if (mutating) throw new ApiError('outcome_unknown', response.status, retryKey, revision, requestId, retryAfterSeconds);
-        if (error instanceof ApiError) throw new ApiError(error.code, response.status, retryKey, revision, requestId, retryAfterSeconds);
-        throw error;
-      }
-      if (!response.ok) {
-        if (mutating && (response.status >= 500 || response.status === 408)) throw new ApiError('outcome_unknown', response.status, retryKey, revision, requestId, retryAfterSeconds);
-        let code = `http_${response.status}`;
-        try {
-          const error = JSON.parse(bytes.toString('utf8'))?.error?.code;
-          if (typeof error === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(error)) code = error;
-        } catch { /* Error bodies may be plain text. */ }
-        throw new ApiError(code, response.status, retryKey, revision, requestId, retryAfterSeconds);
-      }
-      if (input.download) {
-        const contentRange = response.headers.get('content-range');
-        if (response.status === 206) {
-          const match = contentRange?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
-          const start = Number(match?.[1]), end = Number(match?.[2]), total = Number(match?.[3]);
-          if (![start, end, total].every(Number.isSafeInteger) || start !== downloadStart || end < start ||
-              end > downloadEnd || end >= total || bytes.length !== end - start + 1) {
+    return withRequestSlot(async () => {
+      let requestId: string | undefined, retryAfterSeconds: number | undefined;
+      try {
+        const response = await this.fetcher(url, {
+          method, headers, ...(body === undefined ? {} : { body }), redirect: 'manual', signal: requestSignal, credentials: 'omit',
+        });
+        const reference = response.headers.get('X-Request-ID'), retry = response.headers.get('Retry-After');
+        if (reference && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(reference)) requestId = reference;
+        if (retry && /^\d{1,5}$/.test(retry) && Number(retry) <= 86400) retryAfterSeconds = Number(retry);
+        if (response.status >= 300 && response.status < 400) {
+          await response.body?.cancel();
+          throw new ApiError(mutating ? 'outcome_unknown' : 'redirect_refused', response.status, retryKey, revision, requestId, retryAfterSeconds);
+        }
+        let bytes: Buffer;
+        try { bytes = await boundedBody(response, input.download && response.ok ? downloadEnd - downloadStart + 1 : JSON_LIMIT); }
+        catch (error) {
+          if (mutating) throw new ApiError('outcome_unknown', response.status, retryKey, revision, requestId, retryAfterSeconds);
+          if (error instanceof ApiError) throw new ApiError(error.code, response.status, retryKey, revision, requestId, retryAfterSeconds);
+          throw error;
+        }
+        if (!response.ok) {
+          if (mutating && (response.status >= 500 || response.status === 408)) throw new ApiError('outcome_unknown', response.status, retryKey, revision, requestId, retryAfterSeconds);
+          let code = `http_${response.status}`;
+          try {
+            const error = JSON.parse(bytes.toString('utf8'))?.error?.code;
+            if (typeof error === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(error)) code = error;
+          } catch { /* Error bodies may be plain text. */ }
+          throw new ApiError(code, response.status, retryKey, revision, requestId, retryAfterSeconds);
+        }
+        if (input.download) {
+          const contentRange = response.headers.get('content-range');
+          if (response.status === 206) {
+            const match = contentRange?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
+            const start = Number(match?.[1]), end = Number(match?.[2]), total = Number(match?.[3]);
+            if (![start, end, total].every(Number.isSafeInteger) || start !== downloadStart || end < start ||
+                end > downloadEnd || end >= total || bytes.length !== end - start + 1) {
+              throw new ApiError('invalid_file_range', response.status, retryKey, revision, requestId, retryAfterSeconds);
+            }
+          } else if (response.status !== 200 || downloadStart !== 0) {
             throw new ApiError('invalid_file_range', response.status, retryKey, revision, requestId, retryAfterSeconds);
           }
-        } else if (response.status !== 200 || downloadStart !== 0) {
-          throw new ApiError('invalid_file_range', response.status, retryKey, revision, requestId, retryAfterSeconds);
+          return {
+            encoding: 'base64', data: bytes.toString('base64'), bytes: bytes.length,
+            mimeType: response.headers.get('content-type') ?? 'application/octet-stream',
+            contentRange, etag: response.headers.get('etag'),
+          };
         }
-        return {
-          encoding: 'base64', data: bytes.toString('base64'), bytes: bytes.length,
-          mimeType: response.headers.get('content-type') ?? 'application/octet-stream',
-          contentRange, etag: response.headers.get('etag'),
-        };
+        try {
+          const parsed: unknown = JSON.parse(bytes.toString('utf8'));
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not_object');
+          if (input.affineResponse) {
+            const parsers = { catalog: parseNativePreparationCatalog, review: parseNativePreparationReview, preparation: parseNativePreparation, prepared: parseAffineEvaluationPrepared, batchPrepared: parseAffineBatchPrepared };
+            const validated = parsers[input.affineResponse](parsed);
+            const bound = (['prepared', 'batchPrepared'].includes(input.affineResponse) ? (validated as ReturnType<typeof parseAffineEvaluationPrepared>).request : validated) as unknown as Record<string, unknown>;
+            if (Object.entries(input.affineExpected ?? {}).some(([key, value]) => bound[key] !== value)) throw new Error('affine_response_mismatch');
+            if (input.affineResponse === 'batchPrepared' && Number(bound.jobExpiresAt) <= Date.now() / 1000) throw new Error('expired_batch_preparation');
+            return validated as unknown as Record<string, unknown>;
+          }
+          return input.generationResponse
+            ? parseGenerationResponse(input.generationResponse, parsed, 'key', input.generationExpected) as Record<string, unknown>
+            : parsed as Record<string, unknown>;
+        } catch { throw new ApiError(mutating ? 'outcome_unknown' : 'invalid_response', response.status, retryKey, revision, requestId, retryAfterSeconds); }
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(mutating ? 'outcome_unknown' : requestSignal.aborted ? 'request_aborted' : 'upstream_unavailable', undefined, retryKey, revision, requestId, retryAfterSeconds);
       }
-      try {
-        const parsed: unknown = JSON.parse(bytes.toString('utf8'));
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not_object');
-        if (input.affineResponse) {
-          const parsers = { catalog: parseNativePreparationCatalog, review: parseNativePreparationReview, preparation: parseNativePreparation, prepared: parseAffineEvaluationPrepared, batchPrepared: parseAffineBatchPrepared };
-          const validated = parsers[input.affineResponse](parsed);
-          const bound = (['prepared', 'batchPrepared'].includes(input.affineResponse) ? (validated as ReturnType<typeof parseAffineEvaluationPrepared>).request : validated) as unknown as Record<string, unknown>;
-          if (Object.entries(input.affineExpected ?? {}).some(([key, value]) => bound[key] !== value)) throw new Error('affine_response_mismatch');
-          if (input.affineResponse === 'batchPrepared' && Number(bound.jobExpiresAt) <= Date.now() / 1000) throw new Error('expired_batch_preparation');
-          return validated as unknown as Record<string, unknown>;
-        }
-        return input.generationResponse
-          ? parseGenerationResponse(input.generationResponse, parsed, 'key', input.generationExpected) as Record<string, unknown>
-          : parsed as Record<string, unknown>;
-      } catch { throw new ApiError(mutating ? 'outcome_unknown' : 'invalid_response', response.status, retryKey, revision, requestId, retryAfterSeconds); }
-    } catch (error) {
-      if (error instanceof ApiError) throw error;
-      throw new ApiError(mutating ? 'outcome_unknown' : requestSignal.aborted ? 'request_aborted' : 'upstream_unavailable', undefined, retryKey, revision, requestId, retryAfterSeconds);
-    } finally { activeRequests--; }
+    });
   }
 }

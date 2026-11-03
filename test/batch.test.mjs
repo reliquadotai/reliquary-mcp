@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
@@ -138,4 +138,47 @@ test('without writes the upload tool is not offered and the connection says so',
   assert.ok(names.includes('reliquary_batch_download') && !names.includes('reliquary_batch_upload'));
   const connection = (await client.callTool({ name: 'reliquary_connection', arguments: {} })).structuredContent.data;
   assert.ok(connection.tools.includes('reliquary_batch_files') && !connection.tools.includes('reliquary_batch_upload'));
+});
+
+
+test('local batch transfers share the process request limit and release slots after failure', { timeout: 15_000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'batch-admission-'));
+  const path = join(dir, 'request.jsonl');
+  await writeFile(path, '{}\n');
+  let release, ready, started = 0, fetches = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const full = new Promise(resolve => { ready = resolve; });
+  const config = loadConfig({ RELIQUARY_ORDERS_KEY: token, RELIQUARY_ENABLE_WRITES: 'true' });
+  const transport = { request: async () => {
+    if (++started === 32) ready();
+    await gate;
+    throw new Error('Synthetic upload failure.');
+  } };
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = buildServer(config, new ApiClient(config), { transport });
+  const client = new Client({ name: 'batch-admission-test', version: '1.0.0' });
+  let transfers = [];
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const upload = () => client.callTool({ name: 'reliquary_batch_upload', arguments: { path, rightsConfirmed: true, approveExecution: true } });
+    transfers = Array.from({ length: 32 }, upload);
+    await full;
+    const api = new ApiClient(config, async () => { fetches++; return Response.json({ ok: true }); });
+    await assert.rejects(api.request({ path: '/api/v1/generation/catalog' }), error => error.code === 'server_busy');
+    const overflow = await upload();
+    assert.equal(overflow.structuredContent.data.error.code, 'server_busy');
+    assert.equal(started, 32);
+    assert.equal(fetches, 0);
+    release();
+    assert.ok((await Promise.all(transfers)).every(result => result.isError));
+    assert.deepEqual(await api.request({ path: '/api/v1/generation/catalog' }), { ok: true });
+    assert.equal(fetches, 1);
+  } finally {
+    release();
+    await Promise.allSettled(transfers);
+    await client.close();
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

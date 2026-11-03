@@ -196,7 +196,10 @@ test('Affine preparation pins reviewed approval and stable body/header identity'
 
 test('Affine upload preserves exact native request bytes and rejects extra fields', () => {
   const request = { schema: 'affine-native-evaluation-request/v1', profileDigest: 'a'.repeat(64), jobDigest: 'b'.repeat(64), maxHours: 1, maxCostMicroUsd: 5_100_000, nativeJobExpiresAt: 4_000_000_000 };
-  const built = op('affine_request_upload').build({ request, rightsConfirmed: true });
+  const input = { request, rightsConfirmed: true };
+  assert.equal(op('affine_request_upload').schema.safeParse(input).success, true);
+  assert.equal(op('affine_request_upload').schema.safeParse({ ...input, filename: 'request.jsonl' }).success, false);
+  const built = op('affine_request_upload').build(input);
   assert.equal(built.body, JSON.stringify(request) + '\n');
   assert.equal(built.path, '/api/v1/training/files');
   assert.equal(built.headers['Content-Type'], 'application/x-ndjson');

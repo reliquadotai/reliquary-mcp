@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { createGenerationClient, createGenerationTransport, GenerationApiError, generationRequests, type GenerationOrderDetail } from '@reliquary/api';
 import { downloadDelivery, uploadFile } from '@reliquary/api/node';
-import { ApiClient, ApiError } from './api.js';
+import { ApiClient, ApiError, withRequestSlot } from './api.js';
 import type { Config } from './config.js';
 
 // Batch tools that touch the customer's disk (upload a JSONL, write a delivery) run only in a local stdio
@@ -57,7 +57,7 @@ export function registerBatchTools(server: McpServer, config: Config, api: ApiCl
         if (!path.toLowerCase().endsWith('.jsonl')) throw new Error('Choose a .jsonl batch file.');
         const info = await stat(path);
         if (!info.isFile()) throw new Error('The path is not a file.');
-        const file = await uploadFile(transport(), path, { ...(args.fileId ? { fileId: args.fileId } : {}), signal: context.mcpReq.signal });
+        const file = await withRequestSlot(() => uploadFile(transport(), path, { ...(args.fileId ? { fileId: args.fileId } : {}), signal: context.mcpReq.signal }));
         return success({ file });
       } catch (error) { return failure(error); }
     });
@@ -83,11 +83,13 @@ export function registerBatchTools(server: McpServer, config: Config, api: ApiCl
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async (args, context) => {
       try {
-        const signal = context.mcpReq.signal;
-        const client = transport();
-        const detail = await createGenerationClient(client.request).detail(args.orderId, signal);
-        const files = await downloadDelivery(client, detail, resolve(args.directory), { signal });
-        return success({ orderId: detail.id, status: detail.status, directory: resolve(args.directory), files });
+        return await withRequestSlot(async () => {
+          const signal = context.mcpReq.signal;
+          const client = transport();
+          const detail = await createGenerationClient(client.request).detail(args.orderId, signal);
+          const files = await downloadDelivery(client, detail, resolve(args.directory), { signal });
+          return success({ orderId: detail.id, status: detail.status, directory: resolve(args.directory), files });
+        });
       } catch (error) { return failure(error); }
     });
 }
