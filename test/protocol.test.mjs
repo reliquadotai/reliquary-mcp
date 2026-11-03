@@ -268,15 +268,17 @@ test('local batch review and plan run without credentials, writes or any upstrea
   globalThis.fetch = async () => { calls++; throw new Error('No fetch permitted'); };
   const session = await memory(loadConfig({}), { request: async () => { calls++; throw new Error('No upstream permitted'); } });
   const batchJson = ' {"version":"affine-batch-v1","hotkey":"fixture-owner","groups":[{"prompt":"Question","rollouts":[{"output":"Answer","reward":1}]}]}\n';
-  const miningJson = JSON.stringify({epoch:'fixture-1',checkpoint:'a'.repeat(64),training:{batch_cap:{max_tasks_per_miner:125,max_rollouts_per_miner:1000}},batch_file:{formats:['affine-batch-v1','affine-batch-v2'],train:{fields:{lr:{min:1.25e-7,max:1e-6,default:5e-7},kl:{min:0.005,max:0.1,default:0.02}}}}});
+  const miningJson = readFileSync(new URL('./fixtures/affine-mining.json', import.meta.url), 'utf8');
   try {
     const {tools}=await session.client.listTools();
     for(const name of ['reliquary_affine_batch_review','reliquary_affine_batch_plan']) assert.deepEqual(tools.find(t=>t.name===name).annotations,{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false});
     const args={batchJson,miningJson,hotkey:'fixture-owner'};
     const call=(name,input)=>session.client.callTool({name:'reliquary_affine_batch_'+name,arguments:input});
     const review=await call('review',args);assert(!review.isError);assert.equal(review.structuredContent.data.prompts,1);assert.equal(review.structuredContent.data.rollouts,1);assert.equal(review.structuredContent.data.tokenValidation,'not_run');
-    const plan=await call('plan',{...args,head:'b'.repeat(64),reference:'c'.repeat(64),master:'bf16-bootstrap',seed:42,prior:'env-average',trainingResultAt:21600,lastGreenDecidedAt:0});assert(!plan.isError);assert.equal(plan.structuredContent.data.schema,'affine-batch-plan/v1');assert.equal(plan.structuredContent.data.batch.sha256,review.structuredContent.data.sha256);assert.equal(plan.structuredContent.data.comparison.barZ,0.625);assert.equal(plan.structuredContent.data.liveParity,false);
+    const plan=await call('plan',{...args,head:'b'.repeat(64),reference:'c'.repeat(64),master:'bf16-bootstrap',seed:42,prior:'env-average',trainingResultAt:21600,lastGreenDecidedAt:0});assert(!plan.isError);assert.equal(plan.structuredContent.data.schema,'affine-batch-plan/v1');assert.equal(plan.structuredContent.data.batch.sha256,review.structuredContent.data.sha256);assert.equal(plan.structuredContent.data.comparison.barZ,1);assert.equal(plan.structuredContent.data.liveParity,false);
     for(const change of [{batchJson:'x'.repeat(1024*1024+1)},{batchJson:'not JSON'},{path:'/tmp/batch.json'},{apiKey:'not-permitted'},{batchJson:batchJson.replace('"reward":1','"reward":true')}])assert((await call('review',{...args,...change})).isError);
+    for(const literal of ['2.0','2e0','true','null','3'])assert((await call('review',{...args,batchJson:batchJson.replace('affine-batch-v1','affine-batch-v2').replace('"groups":','"train":{"step_mult":'+literal+'},"groups":')})).isError);
+    assert(!(await call('review',{...args,batchJson:batchJson.replace('affine-batch-v1','affine-batch-v2').replace('"groups":','"train":{"step_mult":2,"adv_center":"group_norm","lr_scale_embed":0},"groups":')})).isError);
     assert.equal(calls,0);
   } finally {globalThis.fetch = originalFetch; await session.close();}
 });
