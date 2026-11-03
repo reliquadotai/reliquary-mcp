@@ -22,7 +22,7 @@ test('pinned tarball installs without private repository access and exposes read
   const temp = await mkdtemp(join(tmpdir(), 'mcp-package-'));
   let transport;
   try {
-    const packed = await run(['pack', '--json', '--pack-destination', temp], root);
+    const packed = await run(['pack', '--ignore-scripts', '--json', '--pack-destination', temp], root);
     assert.equal(packed.code, 0, packed.err);
     const name = JSON.parse(packed.out)[0].filename;
     const install = await run(['install', '--prefix', join(temp, 'install'), '--ignore-scripts', '--no-audit', '--no-fund', join(temp, name)], temp);
