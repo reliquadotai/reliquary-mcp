@@ -22,7 +22,7 @@ test('pinned tarball installs without private repository access and exposes read
   const temp = await mkdtemp(join(tmpdir(), 'mcp-package-'));
   let transport;
   try {
-    const packed = await run(['pack', '--json', '--pack-destination', temp], root);
+    const packed = await run(['pack', '--ignore-scripts', '--json', '--pack-destination', temp], root);
     assert.equal(packed.code, 0, packed.err);
     const name = JSON.parse(packed.out)[0].filename;
     const install = await run(['install', '--prefix', join(temp, 'install'), '--ignore-scripts', '--no-audit', '--no-fund', join(temp, name)], temp);
@@ -41,7 +41,7 @@ test('pinned tarball installs without private repository access and exposes read
     await client.connect(transport);
     const result = await client.callTool({ name: 'reliquary_connection', arguments: {} });
     const connection = result.structuredContent.data;
-    assert.equal(connection.version, '0.10.1');
+    assert.equal(connection.version, '0.11.1');
     assert.equal(connection.writesEnabled, false);
     assert.deepEqual(connection.credentialScopes, []);
     assert.ok(connection.tools.includes('reliquary_compute_catalog'));
@@ -51,7 +51,7 @@ test('pinned tarball installs without private repository access and exposes read
     const skills = await client.callTool({ name: 'reliquary_skills', arguments: {} });
     assert.deepEqual(skills.structuredContent.data.skills.map(skill => skill.id), OFFICIAL_SKILLS.map(skill => skill.id));
     const resource = await client.readResource({ uri: 'reliquary://skills' });
-    assert.equal(JSON.parse(resource.contents[0].text).version, '0.10.1');
+    assert.equal(JSON.parse(resource.contents[0].text).version, '0.11.1');
     await client.close();
   } finally { await transport?.close(); await rm(temp, { recursive: true, force: true }); }
 });
