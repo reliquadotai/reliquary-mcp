@@ -1,0 +1,160 @@
+{
+  "epoch": "fixture-1",
+  "checkpoint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "training": {
+    "batch_cap": {
+      "max_tasks_per_miner": 2,
+      "max_rollouts_per_miner": 3
+    },
+    "promotion_gate": {
+      "heldout": {
+        "current_round": {
+          "bar_z": 1,
+          "settings": {
+            "N": 500,
+            "a_hi": 2,
+            "a_lo": 0.5,
+            "a_shrink": 0.5,
+            "bar_z": 1,
+            "block_delay": 3,
+            "cap": 0.1,
+            "cap_max": 0.33,
+            "cap_rule": "task-level",
+            "floor": 0.1,
+            "head_blocks": 3,
+            "head_rollouts": 12,
+            "k_cand": 8,
+            "max_context_tokens": 16384,
+            "max_tokens": 12288,
+            "min_cover": 0.95,
+            "min_scored": 100,
+            "n_init": 2,
+            "scoring_mode": "separate",
+            "shares": "size",
+            "sigma_run_floor": 0.003,
+            "tau_run": 0,
+            "theta_prior_sd": 2,
+            "weighting": "irt-info",
+            "z_inclusive": false
+          }
+        }
+      }
+    }
+  },
+  "batch_file": {
+    "formats": [
+      "affine-batch-v1",
+      "affine-batch-v2"
+    ],
+    "train": {
+      "fields": {
+        "adam_eps": {
+          "default": 1e-08,
+          "max": 0.001,
+          "min": 1e-10,
+          "type": "number"
+        },
+        "adv_center": {
+          "choices": [
+            "mean",
+            "none",
+            "group_norm"
+          ],
+          "default": "mean",
+          "type": "string"
+        },
+        "adv_clip": {
+          "default": null,
+          "max": 100,
+          "min": 0.1,
+          "type": "number"
+        },
+        "clamp_mode": {
+          "choices": [
+            "per_tensor",
+            "global_norm",
+            "both"
+          ],
+          "default": "per_tensor",
+          "type": "string"
+        },
+        "global_norm_cap": {
+          "default": 1,
+          "max": 1,
+          "min": 0.005,
+          "type": "number"
+        },
+        "kl": {
+          "default": 0.02,
+          "max": 0.1,
+          "min": 0.005,
+          "type": "number"
+        },
+        "loss_agg": {
+          "choices": [
+            "seq_mean",
+            "token_mean"
+          ],
+          "default": "seq_mean",
+          "type": "string"
+        },
+        "lr": {
+          "default": 5e-07,
+          "max": 1e-06,
+          "min": 1.25e-07,
+          "type": "number"
+        },
+        "lr_scale_attn": {
+          "default": 1,
+          "max": 2,
+          "min": 0,
+          "type": "number"
+        },
+        "lr_scale_early": {
+          "default": 1,
+          "max": 2,
+          "min": 0,
+          "type": "number"
+        },
+        "lr_scale_embed": {
+          "default": 1,
+          "max": 2,
+          "min": 0,
+          "type": "number"
+        },
+        "lr_scale_late": {
+          "default": 1,
+          "max": 2,
+          "min": 0,
+          "type": "number"
+        },
+        "lr_scale_lm_head": {
+          "default": 1,
+          "max": 2,
+          "min": 0,
+          "type": "number"
+        },
+        "lr_scale_mlp": {
+          "default": 1,
+          "max": 2,
+          "min": 0,
+          "type": "number"
+        },
+        "step_mult": {
+          "choices": [
+            1,
+            2
+          ],
+          "default": 1,
+          "type": "integer"
+        },
+        "weight_decay": {
+          "default": 0.01,
+          "max": 0.05,
+          "min": 0,
+          "type": "number"
+        }
+      }
+    }
+  }
+}
