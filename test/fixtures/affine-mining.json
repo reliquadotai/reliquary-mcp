@@ -31,7 +31,7 @@
             "n_init": 2,
             "scoring_mode": "separate",
             "shares": "size",
-            "sigma_run_floor": 0.003,
+            "sigma_run_floor": 0,
             "tau_run": 0,
             "theta_prior_sd": 2,
             "weighting": "irt-info",
