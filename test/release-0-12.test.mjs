@@ -25,6 +25,7 @@ const evaluationQuote = {
   sampling, verification: 'draw', seed: 7, input_file_id: FILE, output_format: 'parquet', line_errors: 0,
   preview: [{ custom_id: 'm1', prompt_tokens: 30, text: 'What is 7 times 8?' }], purpose: 'eval', grader: 'boxed_math_v1',
   pricing: { mode: 'any_model', verification: 'draw', grading_fee_usd: 1 },
+  capacity: { starts: 'queued', reason: 'waiting_for_capacity', queue_position: 2, estimated_start_at: null },
 };
 // The order.evaluation, price and deliveries recorded from production on 2026-11-09 (identifiers replaced).
 const metrics = { n_problems: 2, samples: 1, expected_rows: 2, graded_rows: 2, ungraded_rows: 0, missing_rows: 0, mean_score: 0.5,
@@ -86,6 +87,7 @@ test('batch quote takes an optional grader and checks it on the quote', async ()
   assert.equal(quote.grader, 'boxed_math_v1');
   assert.equal(quote.pricing.grading_fee_usd, 1);
   assert.equal(quote.architecture, 'Qwen3ForCausalLM');
+  assert.deepEqual(quote.capacity, evaluationQuote.capacity);
   const changed = new ApiClient(config, async () => Response.json({ ...evaluationQuote, grader: 'exact_match_v1' }, { status: 201 }));
   await assert.rejects(changed.request(op('batch_quote').build({ model: 'Qwen/Qwen3-8B', revision: REV, inputFileId: FILE, grader: 'boxed_math_v1' })), { code: 'outcome_unknown' });
 });
@@ -112,6 +114,15 @@ test('reading an order surfaces the evaluation summary', async () => {
     const viaTool = await client.callTool({ name: 'reliquary_generation_order_get', arguments: { id: ORDER } });
     assert.deepEqual(viaTool.structuredContent.data.order.evaluation, order.evaluation);
   } finally { await client.close(); await server.close(); }
+
+  const queued = { ...order, status: 'queued', finished_at: null, status_reason: 'daily_capacity_reached', deliveries: [],
+    evaluation: { grader: 'boxed_math_v1', status: 'pending', complete: null, summary: null },
+    queue_position: 3, estimated_start_at: '2026-11-10T00:00:00.000Z' };
+  const waiting = new ApiClient(config, async () => Response.json({ order: queued }));
+  const readWaiting = (await waiting.request(op('generation_order_get').build({ id: ORDER }))).order;
+  assert.equal(readWaiting.queue_position, 3);
+  assert.equal(readWaiting.estimated_start_at, queued.estimated_start_at);
+  assert.equal(readWaiting.status_reason, 'daily_capacity_reached');
 
   const { purpose: _purpose, evaluation: _evaluation, ...batchOrder } = order;
   const plain = new ApiClient(config, async () => Response.json({ order: batchOrder }));

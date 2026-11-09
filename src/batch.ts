@@ -78,7 +78,7 @@ export function registerBatchTools(server: McpServer, config: Config, api: ApiCl
 
   if (offered.has('reliquary_batch_download'))
     server.registerTool('reliquary_batch_download', {
-      description: 'Save every delivered file of an owned batch order under a local directory the user chose (<directory>/<delivery id>/<file>), resuming partial files and checking each sha256. Returns paths, sizes and verification, never contents.',
+      description: 'Save every delivered file of an owned batch order under a local directory the user chose (<directory>/<delivery id>/<file>), resuming partial files and verifying files whose sha256 is supplied. Returns paths, sizes and verification, never contents.',
       inputSchema: z.strictObject({ orderId: id, directory: localPath }), outputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async (args, context) => {
