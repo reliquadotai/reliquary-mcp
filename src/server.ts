@@ -8,7 +8,7 @@ import { operations } from './tools.js';
 import { workflowText } from './workflows.js';
 import { availableBatchTools, registerBatchTools, type BatchToolDeps } from './batch.js';
 
-export const version = '0.11.2';
+export const version = '0.12.0';
 export const affineLocalToolNames = ['reliquary_affine_batch_review', 'reliquary_affine_batch_plan'] as const;
 const outputSchema = z.object({ data: z.record(z.string(), z.unknown()) });
 function skillsCatalogFor(apiOrigin: string) {

@@ -2,10 +2,10 @@
 
 ## Developer preview installation
 
-MCP 0.11.2 is a source release candidate for local batch preparation. The source is [MIT licensed](LICENSE); `private: true` prevents npm registry publication. No hosted release or production availability is asserted. Report suspected vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Node.js 22 or later is required. From a reviewed checkout, run `npm ci`, `npm test` and `npm pack` to build the archive, then install it:
+MCP 0.12.0 is a source release candidate for local batch preparation. The source is [MIT licensed](LICENSE); `private: true` prevents npm registry publication. No hosted release or production availability is asserted. Report suspected vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Node.js 22 or later is required. From a reviewed checkout, run `npm ci`, `npm test` and `npm pack` to build the archive, then install it:
 
 ```sh
-npm install --global ./reliquary-mcp-0.11.2.tgz
+npm install --global ./reliquary-mcp-0.12.0.tgz
 ```
 
 The tarball bundles its pinned API dependency and needs no private repository access. Configure a compatible stdio host with command `reliquary-mcp` and environment `RELIQUARY_ENABLE_WRITES=false`, then call `reliquary_connection`. Public discovery requires no API key; host PATH configuration may be necessary. [Setup guide](https://app.reliqua.ai/docs/agents/mcp).
@@ -104,9 +104,9 @@ Generate an independent random MCP token, for example with `openssl rand -hex 32
 The default bind is `127.0.0.1:3000`. For a container or external listener, set `RELIQUARY_HTTP_HOST=0.0.0.0` and `RELIQUARY_PUBLIC_URL=https://<your-host>/mcp`. Terminate TLS at a trusted reverse proxy; preserve the approved Host header, prevent access to the internal plaintext port, disable proxy request/authorization logging, and apply proxy rate limits. Only that exact browser origin is accepted. Non-browser clients may omit Origin.
 
 ```sh
-docker build -t reliquary-mcp:0.11.2 .
+docker build -t reliquary-mcp:0.12.0 .
 docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.11.2
+  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.12.0
 ```
 
 Configure the ignored environment file for HTTP and external container binding before this command. The image runs as an unprivileged user and contains no credentials. Dependencies and the base image digest are locked. Shutdown stops accepting requests and drains connections for up to five seconds. Upstream API requests time out after 30 seconds by default and share a process-wide admission limit of 32, including local batch transfers. Streaming downloads apply the configured deadline to response headers and remain cancellable while their bodies are written.
@@ -128,7 +128,9 @@ Generation request builders and JSON response validators come from the version-p
 
 Batch files (OpenAI Batch JSONL) use the shared package's file routes and Node helpers. `reliquary_batch_upload` (writes enabled, orders key, local stdio only) uploads a local `.jsonl` in resumable parts after the user confirms data rights and approves; `reliquary_batch_quote` and `reliquary_batch_order` quote and order it on a pinned model; `reliquary_batch_file_get` reads the file record; `reliquary_batch_files` lists a delivery's names, sizes, sha256 and URLs; `reliquary_batch_download` (local stdio only) writes the delivery under a chosen directory with Range resume and sha256 checks. No batch tool returns file contents; an HTTP connector does not register the disk tools because it cannot reach the customer's files.
 
-CPU job builders, client and validators use the pinned 0.11.2 shared package. Its transport is injected through the existing connector's credential, disabled-write, redirect, response, timeout and admission controls. Upload receipts are checked against actual input bytes, reports against frozen artifact digests, and mutated responses against their original intent. Unknown outcomes preserve both the original idempotency key and reviewed revision. Existing generation contracts remain unchanged; training uses its separately scoped platform routes.
+Evaluations on a customer's file reuse those tools: every line carries a top-level `reference`, and `reliquary_batch_quote` takes an optional `grader` (`boxed_math_v1` or `exact_match_v1`). The quote then shows `purpose: "eval"`, the grader and `pricing.grading_fee_usd`; the shared package refuses a quote whose grader differs from the request. `reliquary_generation_order_get` returns `order.evaluation` (grader, `pending`/`graded`/`ungraded` status, `complete` and the score summary) and `reliquary_batch_files` returns the same summary beside the files of delivery `evaluation` (`graded.parquet`, `report.json`, `manifest.json`). The official skill `reliquary-evaluation-file` describes the workflow. `reliquary_generation_catalog` keeps the catalog's `architectures`, the model architectures quotes accept. The platform's OpenAI-compatible routes (`https://app.reliqua.ai/api/openai/v1`) serve the same files for the official OpenAI SDK; these tools keep using the native routes, which quote before ordering. `reliquary_evaluation_quote` accepts the catalog's namespaced environment ids such as `verifiers:aime25`, which 0.11 refused.
+
+CPU job builders, client and validators use the pinned 0.12.0 shared package. Its transport is injected through the existing connector's credential, disabled-write, redirect, response, timeout and admission controls. Upload receipts are checked against actual input bytes, reports against frozen artifact digests, and mutated responses against their original intent. Unknown outcomes preserve both the original idempotency key and reviewed revision. Existing generation contracts remain unchanged; training uses its separately scoped platform routes.
 
 Protocol references: [MCP specification](https://modelcontextprotocol.io/specification/2026-07-28), [official SDK](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v2.3.1), [HTTP serving](https://ts.sdk.modelcontextprotocol.io/v2/serving/http.html), [authorization](https://ts.sdk.modelcontextprotocol.io/v2/serving/authorization.html).
 

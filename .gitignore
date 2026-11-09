@@ -20,4 +20,4 @@ coverage/
 *.private.*
 
 *.tgz
-!/vendor/api-client-0.11.2.tgz
+!/vendor/api-client-0.12.0.tgz
