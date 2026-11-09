@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { reviewAffineBatch, planAffineBatch } from '@reliquary/api/affine-batches';
-import { DEVELOPER_PREVIEW, OFFICIAL_SKILLS, skillInstructionsPath } from '@reliquary/api';
+import { DEVELOPER_PREVIEW, OFFICIAL_SKILLS, SKILL_STATES, skillInstructionsPath } from '@reliquary/api';
 import { ApiClient, ApiError } from './api.js';
 import type { Config } from './config.js';
 import { operations } from './tools.js';
@@ -24,11 +24,13 @@ function skillsCatalogFor(apiOrigin: string) {
     },
     categories: [...new Set(OFFICIAL_SKILLS.map(skill => skill.category))],
     total: OFFICIAL_SKILLS.length,
+    states: [...SKILL_STATES],
+    notYetAvailable: OFFICIAL_SKILLS.filter(skill => skill.state === 'not-yet-available').map(skill => skill.id),
     skills: OFFICIAL_SKILLS.map(skill => ({ ...skill,
       docsUrl: new URL(skill.docs, docsOrigin).href,
       instructionsUrl: new URL(skillInstructionsPath(skill), docsOrigin).href,
     })),
-    notice: 'This is the installed official workflow catalog, not live execution availability. Release and instruction URLs are configured references; discovery has not fetched or verified publication. Skills do not grant account scopes, activate writes or qualify capacity. Read the connection tool list and current product capabilities before using a workflow. Installation requires user authorization.',
+    notice: 'This is the installed official workflow catalog, not live execution availability. Skills with state not-yet-available describe a product that is not open yet: tell the user, follow its availability note (generation from your own prompts uses reliquary-batch-files) and do not run them. Release and instruction URLs are configured references; discovery has not fetched or verified publication. Skills do not grant account scopes, activate writes or qualify capacity. Read the connection tool list and current product capabilities before using a workflow. Installation requires user authorization.',
   };
 }
 export function buildServer(config: Config, api = new ApiClient(config), batchDeps: BatchToolDeps = {}): McpServer {
@@ -51,16 +53,17 @@ export function buildServer(config: Config, api = new ApiClient(config), batchDe
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, () => ({ content: [{ type: 'text', text: JSON.stringify(connection) }], structuredContent: { data: connection } }));
   server.registerTool('reliquary_skills', {
-    description: 'Discover official workflow skills and their documentation, access requirements and install options. Optional filters combine; unknown IDs or categories return an empty list. Reads the installed catalog without network access, credentials or execution.',
+    description: 'Discover official workflow skills and their documentation, access requirements, state and install options. state not-yet-available marks a product that is not open yet; its availability note says what to use instead. Optional filters combine; unknown IDs or categories return an empty list. Reads the installed catalog without network access, credentials or execution.',
     inputSchema: z.strictObject({
       search: z.string().trim().min(1).max(160).optional(),
       category: z.string().trim().min(1).max(80).optional(),
       id: z.string().regex(/^reliquary-[a-z0-9-]{1,80}$/).optional(),
+      state: z.enum(SKILL_STATES).optional().describe('not-yet-available lists workflows whose product is not open yet.'),
     }), outputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, ({ search, category, id }) => {
+  }, ({ search, category, id, state }) => {
     const query = search?.toLowerCase();
-    const skills = skillsCatalog.skills.filter(skill => (!id || skill.id === id) && (!category || skill.category === category) &&
+    const skills = skillsCatalog.skills.filter(skill => (!id || skill.id === id) && (!category || skill.category === category) && (!state || skill.state === state) &&
       (!query || [skill.id, skill.title, skill.description, skill.prompt, skill.category].join(' ').toLowerCase().includes(query)));
     const data = { ...skillsCatalog, count: skills.length, skills };
     return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: { data } };

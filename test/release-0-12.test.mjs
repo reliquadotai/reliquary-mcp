@@ -141,3 +141,29 @@ test('workflow context covers evaluations on a file and the OpenAI SDK route', (
     assert.ok(workflowText.includes(needle), needle);
   assert.ok(!workflowText.includes('0.11 source candidate'));
 });
+
+test('the skills catalog shows which products are not open yet', async () => {
+  const closed = OFFICIAL_SKILLS.filter(skill => skill.state === 'not-yet-available').map(skill => skill.id);
+  assert.ok(closed.includes('reliquary-generation-quote') && closed.includes('reliquary-training-start') && closed.includes('reliquary-cpu-validate') && closed.includes('reliquary-affine-pilot'));
+  assert.ok(!closed.includes('reliquary-batch-files') && !closed.includes('reliquary-evaluation-file'));
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = buildServer(loadConfig({}));
+  const client = new Client({ name: 'state-test', version: '1.0.0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const all = (await client.callTool({ name: 'reliquary_skills', arguments: {} })).structuredContent.data;
+    assert.deepEqual(all.notYetAvailable, closed);
+    assert.deepEqual(all.states, ['available', 'qualified-pilot', 'gated', 'not-yet-available']);
+    assert.match(all.notice, /not-yet-available/);
+    const filtered = (await client.callTool({ name: 'reliquary_skills', arguments: { state: 'not-yet-available' } })).structuredContent.data;
+    assert.deepEqual(filtered.skills.map(skill => skill.id), closed);
+    assert.ok(filtered.skills.every(skill => skill.availability.startsWith('Not yet available: ')));
+    assert.match(filtered.skills.find(skill => skill.id === 'reliquary-generation-order').availability, /reliquary-batch-files/);
+    const open = (await client.callTool({ name: 'reliquary_skills', arguments: { state: 'available' } })).structuredContent.data;
+    assert.ok(open.skills.every(skill => skill.state === 'available' && !skill.availability));
+    assert.equal((await client.callTool({ name: 'reliquary_skills', arguments: { state: 'closed' } })).isError, true);
+  } finally { await client.close(); await server.close(); }
+  assert.match(workflowText, /not-yet-available/);
+  assert.match(workflowText, /compared but not rented/);
+});
