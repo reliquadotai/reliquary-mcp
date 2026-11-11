@@ -2,11 +2,19 @@
 
 ## Developer preview installation
 
-MCP 0.12.0 is a source release candidate for local batch preparation. The source is [MIT licensed](LICENSE); `private: true` prevents npm registry publication. No hosted release or production availability is asserted. Report suspected vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Node.js 22 or later is required. From a reviewed checkout, run `npm ci`, `npm test` and `npm pack` to build the archive, then install it:
+The [developer hub](https://app.reliqua.ai/docs/agents/mcp) provides the checksum-pinned 0.12.0 preview tarball and setup instructions. This MIT-licensed server requires Node.js 22 or later. Report suspected vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Download and verify the 0.12.0 archive using the developer hub, then install it:
 
 ```sh
 npm install --global ./reliquary-mcp-0.12.0.tgz
 ```
+
+For the public npm release, install the pinned version once it is available:
+
+```sh
+npm install --global @reliquadotai/mcp@0.12.1
+```
+
+When upgrading, check that `npm ls --global --depth=0 @reliquary/mcp` identifies the preview in the npm prefix you intend to use. If it does, run `npm uninstall --global @reliquary/mcp` before installing the new package. Both provide the same `reliquary-mcp` executable. Reconnect the MCP client after changing versions. To roll back, uninstall the new package and reinstall the verified preview tarball.
 
 The tarball bundles its pinned API dependency and needs no private repository access. Configure a compatible stdio host with command `reliquary-mcp` and environment `RELIQUARY_ENABLE_WRITES=false`, then call `reliquary_connection`. Public discovery requires no API key; host PATH configuration may be necessary. [Setup guide](https://app.reliqua.ai/docs/agents/mcp).
 
@@ -104,9 +112,9 @@ Generate an independent random MCP token, for example with `openssl rand -hex 32
 The default bind is `127.0.0.1:3000`. For a container or external listener, set `RELIQUARY_HTTP_HOST=0.0.0.0` and `RELIQUARY_PUBLIC_URL=https://<your-host>/mcp`. Terminate TLS at a trusted reverse proxy; preserve the approved Host header, prevent access to the internal plaintext port, disable proxy request/authorization logging, and apply proxy rate limits. Only that exact browser origin is accepted. Non-browser clients may omit Origin.
 
 ```sh
-docker build -t reliquary-mcp:0.12.0 .
+docker build -t reliquary-mcp:0.12.1 .
 docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.12.0
+  --env-file=.env -p 127.0.0.1:3000:3000 reliquary-mcp:0.12.1
 ```
 
 Configure the ignored environment file for HTTP and external container binding before this command. The image runs as an unprivileged user and contains no credentials. Dependencies and the base image digest are locked. Shutdown stops accepting requests and drains connections for up to five seconds. Upstream API requests time out after 30 seconds by default and share a process-wide admission limit of 32, including local batch transfers. Streaming downloads apply the configured deadline to response headers and remain cancellable while their bodies are written.

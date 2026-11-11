@@ -52,10 +52,9 @@ const order = {
 const liveCatalog = { ordering: 'pilot', any_model_ordering: 'pilot', envs: [], models: [],
   architectures: ['Qwen3ForCausalLM', 'Qwen3_5ForCausalLM', 'Qwen3_5ForConditionalGeneration'] };
 
-test('release 0.12.0 pins the matching API package', async () => {
+test('the MCP runtime reports its package version and retains the pinned API', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.equal(pkg.version, '0.12.0');
-  assert.equal(version, '0.12.0');
+  assert.equal(version, pkg.version);
   assert.equal(pkg.dependencies['@reliquary/api'], 'file:vendor/api-client-0.12.0.tgz');
   assert.ok(pkg.files.includes('vendor/api-client-0.12.0.tgz'));
   const api = JSON.parse(await readFile(new URL('../node_modules/@reliquary/api/package.json', import.meta.url), 'utf8'));

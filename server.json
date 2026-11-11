@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.reliquadotai/reliquary-mcp",
+  "title": "Reliquary MCP",
+  "description": "Discover GPU compute and prepare generation and evaluation batches with Reliquary.",
+  "repository": {
+    "url": "https://github.com/reliquadotai/reliquary-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://app.reliqua.ai/developers",
+  "version": "0.12.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@reliquadotai/mcp",
+      "version": "0.12.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
