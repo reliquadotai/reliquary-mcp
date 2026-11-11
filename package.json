@@ -1,7 +1,15 @@
 {
-  "name": "@reliquary/mcp",
-  "version": "0.12.0",
-  "private": true,
+  "name": "@reliquadotai/mcp",
+  "version": "0.12.1",
+  "mcpName": "io.github.reliquadotai/reliquary-mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/reliquadotai/reliquary-mcp.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "license": "MIT",
   "description": "Account-scoped MCP interface for Reliquary",
   "type": "module",

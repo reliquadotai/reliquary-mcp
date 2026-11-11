@@ -25,23 +25,30 @@ test('pinned tarball installs without private repository access and exposes read
     const packed = await run(['pack', '--ignore-scripts', '--json', '--pack-destination', temp], root);
     assert.equal(packed.code, 0, packed.err);
     const name = JSON.parse(packed.out)[0].filename;
-    const install = await run(['install', '--prefix', join(temp, 'install'), '--ignore-scripts', '--no-audit', '--no-fund', join(temp, name)], temp);
+    const install = await run([
+      'install', '--prefix', join(temp, 'install'), '--ignore-scripts', '--no-audit', '--no-fund',
+      '--offline', '--cache', join(temp, 'npm-cache'), join(temp, name),
+    ], temp);
     assert.equal(install.code, 0, install.err);
-    const installedRoot = join(temp, 'install/node_modules/@reliquary/mcp');
+    const installedRoot = join(temp, 'install', 'node_modules', '@reliquadotai', 'mcp');
+    const installedPackage = JSON.parse(await readFile(join(installedRoot, 'package.json'), 'utf8'));
+    assert.equal(installedPackage.mcpName, 'io.github.reliquadotai/reliquary-mcp');
     const installedRequire = createRequire(join(installedRoot, 'package.json'));
     const adapterEntry = installedRequire.resolve('@hono/node-server');
     const adapter = JSON.parse(await readFile(resolve(dirname(adapterEntry), '..', 'package.json'), 'utf8'));
     const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'));
     assert.equal(adapter.version, lock.packages['node_modules/@hono/node-server'].version,
       'Packed installation must retain the reviewed runtime dependency closure.');
-    transport = new StdioClientTransport({ command: process.execPath,
-      args: [join(temp, 'install/node_modules/@reliquary/mcp/dist/index.js')],
+    const launch = process.platform === 'win32'
+      ? { command: process.execPath, args: [join(installedRoot, installedPackage.bin['reliquary-mcp'])] }
+      : { command: join(temp, 'install', 'node_modules', '.bin', 'reliquary-mcp') };
+    transport = new StdioClientTransport({ ...launch,
       env: { PATH: process.env.PATH, RELIQUARY_ENABLE_WRITES: 'false' }, stderr: 'pipe' });
     const client = new Client({ name: 'package-verification', version: '1.0.0' });
     await client.connect(transport);
     const result = await client.callTool({ name: 'reliquary_connection', arguments: {} });
     const connection = result.structuredContent.data;
-    assert.equal(connection.version, '0.12.0');
+    assert.equal(connection.version, installedPackage.version);
     assert.equal(connection.writesEnabled, false);
     assert.deepEqual(connection.credentialScopes, []);
     assert.ok(connection.tools.includes('reliquary_compute_catalog'));
