@@ -12,8 +12,12 @@ test('readiness says its execution and billing fields concern private training r
   assert.match(description, /private training runs only/);
   for (const field of ['ready', 'execution', 'billing', 'service-credits', 'operator-funded-pilot', 'unavailable'])
     assert.ok(description.includes(field), field);
-  assert.match(description, /any_model_ordering in reliquary_generation_catalog for Batch/);
-  assert.match(description, /ordering in reliquary_evaluation_catalog for evaluations/);
+  // A quote on the user's own file, graded or not, is gated by any_model_ordering; evaluation ordering gates catalog sets only.
+  assert.match(description, /any_model_ordering in reliquary_generation_catalog for Batch and for evaluations on a file,/);
+  assert.match(description, /ordering in reliquary_evaluation_catalog for evaluations on catalog sets\./);
+  // Production answers execution pilot today: it must not read as private training being open.
+  assert.match(description, /pilot does not mean private training is open to customers, which the workflow text lists as not yet available/);
+  assert.ok(!description.includes('can currently be dispatched'));
   assert.ok(!description.includes('upstream billing'));
   assert.ok(op('generation_catalog') && op('evaluation_catalog'));
 });
