@@ -9,7 +9,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { generationRequests } from '@reliquary/api';
 import { ApiClient } from '../dist/api.js';
-import { availableBatchTools, storedFileName } from '../dist/batch.js';
+import { acceptedFileName, availableBatchTools } from '../dist/batch.js';
 import { loadConfig } from '../dist/config.js';
 import { buildServer } from '../dist/server.js';
 import { operations } from '../dist/tools.js';
@@ -69,7 +69,7 @@ function platform() {
       let m;
       if (request.method === 'POST' && request.url === '/api/v1/files') {
         const input = JSON.parse(body);
-        // worker/batch-files.ts FILENAME: any other name is refused, with the reason only in the message.
+        // worker/batch-files.ts FILENAME: any other name is refused as invalid_file, and the message does not name the cause.
         if (!/^[\w.() -]{1,200}$/.test(input.filename) || input.filename.startsWith('.'))
           return json(400, { error: { code: 'invalid_file', message: 'Provide a filename, purpose "batch" and bytes up to 209715200.' } });
         files.set('file-1', { ...input, parts: [] });
@@ -81,10 +81,6 @@ function platform() {
         const file = files.get('file-1');
         file.content = Buffer.concat(file.parts);
         return json(200, { id: 'file-1', object: 'file', bytes: file.bytes, filename: file.filename, purpose: 'batch', status: 'processed', created_at: '2030-01-01T00:00:00Z' });
-      }
-      if (request.method === 'GET' && request.url === '/api/v1/files/file-1' && files.get('file-1')?.content) {
-        const file = files.get('file-1');
-        return json(200, { id: 'file-1', object: 'file', bytes: file.bytes, filename: file.filename, purpose: 'batch', status: 'processed', created_at: '2030-01-01T00:00:00Z', sha256: null });
       }
       if (request.url === '/api/v1/dataset-orders/order-1') return json(200, { order });
       if ((m = request.url.match(/^\/api\/v1\/dataset-orders\/order-1\/deliveries\/dl-1\/files\/(.+)$/))) {
@@ -138,14 +134,12 @@ test('an agent uploads a local file and saves a delivery without any content ent
   } finally { await new Promise(r => fake.server.close(r)); }
 });
 
-test('a local file name the platform would refuse is stored under an accepted name', async () => {
-  // A name the platform takes is sent unchanged, so an upload that worked before is the same upload.
+test('a local file name the platform would refuse is refused before upload, with the reason', async () => {
+  // The same rule as the platform's: a name it takes is sent unchanged, so an upload that worked before is the same upload.
   for (const name of ['requests.jsonl', 'Requests (final) v2-1_a.JSONL', 'a'.repeat(194) + '.jsonl'])
-    assert.equal(storedFileName('/data/' + name), name);
-  assert.equal(storedFileName('/data/donn\u00e9es [v2], \u{1F600}+1.jsonl'), 'donn_es _v2__ __1.jsonl');
-  assert.equal(storedFileName('/data/.hidden.jsonl'), '_hidden.jsonl');
-  const long = storedFileName('/data/' + 'a'.repeat(230) + '.jsonl');
-  assert.equal(long, 'a'.repeat(194) + '.jsonl');
+    assert.equal(acceptedFileName('/data/' + name), true, name);
+  for (const name of ['donn\u00e9es.jsonl', 'requests [v2].jsonl', 'a+b.jsonl', '\u{1F600}.jsonl', '.hidden.jsonl', 'a'.repeat(195) + '.jsonl'])
+    assert.equal(acceptedFileName('/data/' + name), false, name);
 
   const fake = platform();
   await new Promise(r => fake.server.listen(0, '127.0.0.1', r));
@@ -154,23 +148,30 @@ test('a local file name the platform would refuse is stored under an accepted na
     const config = loadConfig({ RELIQUARY_ORDERS_KEY: token, RELIQUARY_ENABLE_WRITES: 'true', RELIQUARY_ALLOW_LOCAL_HTTP: 'true',
       RELIQUARY_API_URL: `http://127.0.0.1:${fake.server.address().port}` });
     const client = await connect(config);
-    const path = join(dir, 'donn\u00e9es [v2].jsonl');
     const input = Buffer.from('{"custom_id":"a","method":"POST","url":"/v1/chat/completions","body":{}}\n');
+    for (const name of ['donn\u00e9es [v2].jsonl', '.hidden.jsonl']) {
+      const path = join(dir, name);
+      await writeFile(path, input);
+      const refused = await client.callTool({ name: 'reliquary_batch_upload', arguments: { path, rightsConfirmed: true, approveExecution: true } });
+      assert.equal(refused.isError, true, name);
+      assert.match(refused.structuredContent.data.error.message, /only under a name of at most 200 characters made of ASCII letters, digits, spaces and _ \. \( \) -, not starting with a dot\. Rename the file/);
+      assert.deepEqual(JSON.parse(refused.content[0].text), refused.structuredContent.data);
+    }
+    // Nothing was sent: the platform never saw the refused names.
+    assert.deepEqual(fake.seen, []);
+    assert.equal(fake.files.size, 0);
+    // An accepted name is stored as it is.
+    const path = join(dir, 'Requests (final) v2-1_a.jsonl');
     await writeFile(path, input);
     const uploaded = await client.callTool({ name: 'reliquary_batch_upload', arguments: { path, rightsConfirmed: true, approveExecution: true } });
     assert.equal(uploaded.isError, undefined, JSON.stringify(uploaded));
-    assert.equal(uploaded.structuredContent.data.file.filename, 'donn_es _v2_.jsonl');
-    assert.equal(fake.files.get('file-1').filename, 'donn_es _v2_.jsonl');
+    assert.equal(uploaded.structuredContent.data.file.filename, 'Requests (final) v2-1_a.jsonl');
     assert.deepEqual(fake.files.get('file-1').content, input);
-    // The same local file resumes under the same stored name.
-    const resumed = await client.callTool({ name: 'reliquary_batch_upload', arguments: { path, fileId: 'file-1', rightsConfirmed: true, approveExecution: true } });
-    assert.equal(resumed.isError, undefined, JSON.stringify(resumed));
-    assert.equal(resumed.structuredContent.data.file.filename, 'donn_es _v2_.jsonl');
     const { tools } = await client.listTools();
     const tool = tools.find(value => value.name === 'reliquary_batch_upload');
-    assert.match(tool.description, /is sent as _/);
-    assert.match(tool.description, /the returned record shows the stored name/);
+    assert.match(tool.description, /stored under its local name, which must be at most 200 characters made of ASCII letters, digits, spaces and _ \. \( \) -, not starting with a dot: another name is refused with that reason before anything is sent\./);
     assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ['approveExecution', 'fileId', 'path', 'rightsConfirmed']);
+    assert.deepEqual(tool.inputSchema.required.sort(), ['approveExecution', 'path', 'rightsConfirmed']);
     assert.equal(tool.inputSchema.additionalProperties, false);
     await client.close();
   } finally { await new Promise(r => fake.server.close(r)); await rm(dir, { recursive: true, force: true }); }
