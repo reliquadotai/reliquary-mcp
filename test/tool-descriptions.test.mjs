@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { operations } from '../dist/tools.js';
+import { workflowText } from '../dist/workflows.js';
 
 const op = name => operations.find(value => value.name === 'reliquary_' + name);
 
@@ -24,4 +25,13 @@ test('the batch file record does not promise a sha256 as soon as the file is pro
   assert.match(description, /refused as invalid_batch_file keeps null/);
   assert.ok(!description.includes('once processed'));
   assert.match(description, /Never returns its contents/);
+});
+
+test('the workflow text gives the size limit of the OpenAI SDK upload route', () => {
+  // POST /api/openai/v1/files holds the file in memory and stops at 32 MiB; the native upload in parts goes further.
+  const sentence = workflowText.split('. ').find(part => part.includes('https://app.reliqua.ai/api/openai/v1'));
+  assert.match(sentence, /only when it holds at most 32 MiB/);
+  assert.match(sentence, /refuses a larger one/);
+  assert.ok(!workflowText.includes('The same file can be sent with the official OpenAI SDK at base_url https://app.reliqua.ai/api/openai/v1;'));
+  assert.match(workflowText, /These tools use the native routes, which upload in parts and quote before ordering\./);
 });
