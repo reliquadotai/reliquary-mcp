@@ -9,7 +9,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { generationRequests } from '@reliquary/api';
 import { ApiClient } from '../dist/api.js';
-import { availableBatchTools } from '../dist/batch.js';
+import { availableBatchTools, storedFileName } from '../dist/batch.js';
 import { loadConfig } from '../dist/config.js';
 import { buildServer } from '../dist/server.js';
 import { operations } from '../dist/tools.js';
@@ -69,6 +69,9 @@ function platform() {
       let m;
       if (request.method === 'POST' && request.url === '/api/v1/files') {
         const input = JSON.parse(body);
+        // worker/batch-files.ts FILENAME: any other name is refused, with the reason only in the message.
+        if (!/^[\w.() -]{1,200}$/.test(input.filename) || input.filename.startsWith('.'))
+          return json(400, { error: { code: 'invalid_file', message: 'Provide a filename, purpose "batch" and bytes up to 209715200.' } });
         files.set('file-1', { ...input, parts: [] });
         return json(201, { id: 'file-1', object: 'file', bytes: input.bytes, filename: input.filename, purpose: 'batch', status: 'uploading',
           created_at: '2030-01-01T00:00:00Z', upload: { part_size: 1024, parts: Math.ceil(input.bytes / 1024) } });
@@ -78,6 +81,10 @@ function platform() {
         const file = files.get('file-1');
         file.content = Buffer.concat(file.parts);
         return json(200, { id: 'file-1', object: 'file', bytes: file.bytes, filename: file.filename, purpose: 'batch', status: 'processed', created_at: '2030-01-01T00:00:00Z' });
+      }
+      if (request.method === 'GET' && request.url === '/api/v1/files/file-1' && files.get('file-1')?.content) {
+        const file = files.get('file-1');
+        return json(200, { id: 'file-1', object: 'file', bytes: file.bytes, filename: file.filename, purpose: 'batch', status: 'processed', created_at: '2030-01-01T00:00:00Z', sha256: null });
       }
       if (request.url === '/api/v1/dataset-orders/order-1') return json(200, { order });
       if ((m = request.url.match(/^\/api\/v1\/dataset-orders\/order-1\/deliveries\/dl-1\/files\/(.+)$/))) {
@@ -129,6 +136,44 @@ test('an agent uploads a local file and saves a delivery without any content ent
     assert.ok(!JSON.stringify(saved).includes('custom_id'));
     assert.ok(fake.seen.every(r => r.auth === `Bearer ${token}`));
   } finally { await new Promise(r => fake.server.close(r)); }
+});
+
+test('a local file name the platform would refuse is stored under an accepted name', async () => {
+  // A name the platform takes is sent unchanged, so an upload that worked before is the same upload.
+  for (const name of ['requests.jsonl', 'Requests (final) v2-1_a.JSONL', 'a'.repeat(194) + '.jsonl'])
+    assert.equal(storedFileName('/data/' + name), name);
+  assert.equal(storedFileName('/data/donn\u00e9es [v2], \u{1F600}+1.jsonl'), 'donn_es _v2__ __1.jsonl');
+  assert.equal(storedFileName('/data/.hidden.jsonl'), '_hidden.jsonl');
+  const long = storedFileName('/data/' + 'a'.repeat(230) + '.jsonl');
+  assert.equal(long, 'a'.repeat(194) + '.jsonl');
+
+  const fake = platform();
+  await new Promise(r => fake.server.listen(0, '127.0.0.1', r));
+  const dir = await mkdtemp(join(tmpdir(), 'mcp-batch-name-'));
+  try {
+    const config = loadConfig({ RELIQUARY_ORDERS_KEY: token, RELIQUARY_ENABLE_WRITES: 'true', RELIQUARY_ALLOW_LOCAL_HTTP: 'true',
+      RELIQUARY_API_URL: `http://127.0.0.1:${fake.server.address().port}` });
+    const client = await connect(config);
+    const path = join(dir, 'donn\u00e9es [v2].jsonl');
+    const input = Buffer.from('{"custom_id":"a","method":"POST","url":"/v1/chat/completions","body":{}}\n');
+    await writeFile(path, input);
+    const uploaded = await client.callTool({ name: 'reliquary_batch_upload', arguments: { path, rightsConfirmed: true, approveExecution: true } });
+    assert.equal(uploaded.isError, undefined, JSON.stringify(uploaded));
+    assert.equal(uploaded.structuredContent.data.file.filename, 'donn_es _v2_.jsonl');
+    assert.equal(fake.files.get('file-1').filename, 'donn_es _v2_.jsonl');
+    assert.deepEqual(fake.files.get('file-1').content, input);
+    // The same local file resumes under the same stored name.
+    const resumed = await client.callTool({ name: 'reliquary_batch_upload', arguments: { path, fileId: 'file-1', rightsConfirmed: true, approveExecution: true } });
+    assert.equal(resumed.isError, undefined, JSON.stringify(resumed));
+    assert.equal(resumed.structuredContent.data.file.filename, 'donn_es _v2_.jsonl');
+    const { tools } = await client.listTools();
+    const tool = tools.find(value => value.name === 'reliquary_batch_upload');
+    assert.match(tool.description, /is sent as _/);
+    assert.match(tool.description, /the returned record shows the stored name/);
+    assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ['approveExecution', 'fileId', 'path', 'rightsConfirmed']);
+    assert.equal(tool.inputSchema.additionalProperties, false);
+    await client.close();
+  } finally { await new Promise(r => fake.server.close(r)); await rm(dir, { recursive: true, force: true }); }
 });
 
 test('without writes the upload tool is not offered and the connection says so', async () => {
