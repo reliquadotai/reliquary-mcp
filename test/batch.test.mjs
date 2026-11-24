@@ -177,6 +177,22 @@ test('a local file name the platform would refuse is refused before upload, with
   } finally { await new Promise(r => fake.server.close(r)); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('a refused order read passes on the API message as bounded text, never the credential', async () => {
+  const config = loadConfig({ RELIQUARY_ORDERS_KEY: token });
+  const api = new ApiClient(config, async () => Response.json({ error: { code: 'not_found', message: 'Order\nnot found.' } }, { status: 404, headers: { 'X-Request-ID': 'request-404' } }));
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = buildServer(config, api);
+  const client = new Client({ name: 'batch-refusal-test', version: '1.0.0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const result = await client.callTool({ name: 'reliquary_batch_files', arguments: { orderId: 'order-9' } });
+    assert.equal(result.isError, true);
+    assert.deepEqual(result.structuredContent.data, { error: { code: 'not_found', status: 404, requestId: 'request-404', message: 'Order not found.' } });
+    assert.ok(!JSON.stringify(result).includes(token));
+  } finally { await client.close(); await server.close(); }
+});
+
 test('without writes the upload tool is not offered and the connection says so', async () => {
   const client = await connect(loadConfig({ RELIQUARY_ORDERS_KEY: token }));
   const { tools } = await client.listTools();

@@ -39,7 +39,7 @@ export function availableBatchTools(config: Config): BatchTool[] {
 }
 
 function failure(error: unknown) {
-  const safe = error instanceof ApiError ? { code: error.code, ...(error.status ? { status: error.status } : {}), ...(error.requestId ? { requestId: error.requestId } : {}) }
+  const safe = error instanceof ApiError ? { code: error.code, ...(error.status ? { status: error.status } : {}), ...(error.requestId ? { requestId: error.requestId } : {}), ...(error.serverMessage ? { message: error.serverMessage } : {}) }
     : error instanceof GenerationApiError ? { code: error.code, ...(error.status ? { status: error.status } : {}), ...(error.requestId ? { requestId: error.requestId } : {}),
       ...(error.message && !error.message.startsWith('API request failed') ? { message: error.message.slice(0, 300) } : {}) }
     : { code: 'request_failed', ...(error instanceof Error ? { message: error.message.slice(0, 300) } : {}) };
