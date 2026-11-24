@@ -26,7 +26,10 @@ test('the batch file record does not promise a sha256 as soon as the file is pro
   // The platform hashes a file uploaded in parts when a quote first reads it: a processed file answers sha256 null before.
   const { description } = op('batch_file_get');
   assert.match(description, /sha256 null until a quote \(reliquary_batch_quote\) has read it/);
-  assert.match(description, /refused as invalid_batch_file keeps null/);
+  // A refused quote does not set the hash, but a file sent through the OpenAI-compatible upload is hashed at upload and a
+  // file an earlier quote read keeps its hash: the description must not say a refused file keeps null.
+  assert.match(description, /a quote refused as invalid_batch_file does not set it/);
+  assert.ok(!description.includes('keeps null'));
   assert.ok(!description.includes('once processed'));
   assert.match(description, /Never returns its contents/);
 });

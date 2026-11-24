@@ -252,7 +252,7 @@ export const operations: Operation[] = [
     }, 'orders', { write: true }),
   operation('batch_order', 'Order exactly one reviewed batch file quote after explicit user approval. This may reserve or spend credits and enqueue work. Reuse the same request key after an ambiguous result.', z.strictObject({ quoteId: id, idempotencyKey: key, approveExecution: approved }),
     ({ quoteId, idempotencyKey }) => ({ ...generation.create(quoteId, idempotencyKey), generationResponse: 'order' }), 'orders', { write: true, spend: true }),
-  operation('batch_file_get', 'Read an owned batch input file record: size, name, upload status and, for a processed file, sha256. A file uploaded in parts, as reliquary_batch_upload does, has sha256 null until a quote (reliquary_batch_quote) has read it; a file refused as invalid_batch_file keeps null. Never returns its contents.', z.strictObject({ fileId: batchFileId }),
+  operation('batch_file_get', 'Read an owned batch input file record: size, name, upload status and, for a processed file, sha256. A file uploaded in parts, as reliquary_batch_upload does, has sha256 null until a quote (reliquary_batch_quote) has read it; a quote refused as invalid_batch_file does not set it. Never returns its contents.', z.strictObject({ fileId: batchFileId }),
     ({ fileId }) => ({ path: batchFiles.get(fileId).path }), 'orders'),
   operation('generation_balance', 'Read service-credit balance and recent ledger entries using the generation credential. No credits are reserved by this read.', empty,
     () => ({ path: '/api/v1/balance' }), 'orders'),
