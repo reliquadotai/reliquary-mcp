@@ -139,6 +139,16 @@ test('the generation catalog tool keeps architectures', async () => {
   assert.match(op('generation_catalog').description, /architectures/);
 });
 
+test('the general catalog is described as reference examples, not availability', () => {
+  const { description } = op('catalog');
+  assert.match(description, /source: examples/);
+  assert.match(description, /not live inventory or availability/);
+  for (const tool of ['compute_catalog', 'generation_catalog', 'evaluation_catalog']) {
+    assert.ok(op(tool), tool);
+    assert.match(description, new RegExp('reliquary_' + tool));
+  }
+});
+
 test('evaluation quotes accept the namespaced environment ids of the live catalog', () => {
   const args = { model: 'Qwen/Qwen3-8B', revision: REV, envs: [{ env: 'verifiers:aime25', set_id: 'verifiers-aime25-r0-n30', problems: 2, samples: 1 }], max_new_tokens: 64, thinking: false };
   assert.deepEqual(op('evaluation_quote').build(args).json, args);
