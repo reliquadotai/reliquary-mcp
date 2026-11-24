@@ -16,3 +16,12 @@ test('readiness says its execution and billing fields concern private training r
   assert.ok(!description.includes('upstream billing'));
   assert.ok(op('generation_catalog') && op('evaluation_catalog'));
 });
+
+test('the batch file record does not promise a sha256 as soon as the file is processed', () => {
+  // The platform hashes a file uploaded in parts when a quote first reads it: a processed file answers sha256 null before.
+  const { description } = op('batch_file_get');
+  assert.match(description, /sha256 null until a quote \(reliquary_batch_quote\) has read it/);
+  assert.match(description, /refused as invalid_batch_file keeps null/);
+  assert.ok(!description.includes('once processed'));
+  assert.match(description, /Never returns its contents/);
+});
