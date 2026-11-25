@@ -162,7 +162,7 @@ const monitoringSchema = z.strictObject({
 
 export const operations: Operation[] = [
   ...[
-    ['catalog', '/api/catalog', 'Read the public model, environment and resource catalog. Availability describes what can currently be offered.'],
+    ['catalog', '/api/catalog', 'Read reference examples (source: examples), approved execution-profile definitions and the reference training catalog. Example offers, prices, models and environments are illustrative, not live inventory or availability. Use reliquary_compute_catalog for observed GPU offers, and reliquary_generation_catalog or reliquary_evaluation_catalog for what can currently be ordered.'],
     ['health', '/api/health', 'Read service health. Health does not establish ordering or execution availability.'],
     ['readiness', '/api/ready', 'Read whether the platform database answers (ready) and two fields about private training runs only: execution (pilot or disabled) says whether training dispatch, training billing and an approved training profile are all in place; pilot does not mean private training is open to customers, which the workflow text lists as not yet available; billing (service-credits, operator-funded-pilot or unavailable) says how such a run is funded. Neither field describes Batch or evaluations, their availability, their prices or how they are billed: read any_model_ordering in reliquary_generation_catalog for Batch and for evaluations on a file, and ordering in reliquary_evaluation_catalog for evaluations on catalog sets.'],
     ['inventory', '/api/inventory', 'Read the public product inventory and qualification states.'],
