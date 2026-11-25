@@ -257,3 +257,34 @@ test('batch upload and download are signed through the packaged transport in wal
     } finally { await session.close(); }
   } finally { await new Promise(done => server.close(done)); await dir.close(); }
 });
+
+test('a flat Gamma refusal keeps its code, so a signed order without balance reports insufficient_balance', async () => {
+  const dir = await walletDir();
+  try {
+    const config = loadConfig({ RELIQUARY_HOTKEY_FILE: await dir.write('reliquary', keyfile(SR)), RELIQUARY_ENABLE_WRITES: 'true' });
+    let reply;
+    const api = new ApiClient(config, async () => reply());
+    const order = { path: '/api/v1/dataset-orders', method: 'POST', scope: 'orders', json: { quote_id: 'quote-1' }, headers: { 'Idempotency-Key': 'stable_request_key_123456' } };
+    const outcome = async request => { try { await api.request(request); return 'ok'; } catch (error) { return [error.code, error.status]; } };
+    const cases = [
+      [{ error: 'insufficient_balance' }, 402, order, ['insufficient_balance', 402]],
+      [{ error: { code: 'insufficient_balance' } }, 402, order, ['insufficient_balance', 402]],
+      [{ error: 'stale_request' }, 401, { path: '/api/v1/balance', scope: 'orders' }, ['stale_request', 401]],
+      [{ error: 'Not a code' }, 402, order, ['http_402', 402]],
+      // A server failure after a mutation stays an unknown outcome, whatever its body says.
+      [{ error: 'insufficient_balance' }, 503, order, ['outcome_unknown', 503]],
+      [{ error: 'insufficient_balance' }, 408, order, ['outcome_unknown', 408]],
+    ];
+    for (const [body, status, request, expected] of cases) {
+      reply = () => Response.json(body, { status });
+      assert.deepEqual(await outcome(request), expected, JSON.stringify([body, status]));
+    }
+    const session = await memory(config, api);
+    try {
+      reply = () => Response.json({ error: 'insufficient_balance' }, { status: 402 });
+      const result = await session.client.callTool({ name: 'reliquary_batch_order', arguments: { quoteId: 'quote-1', idempotencyKey: 'stable_request_key_123456', approveExecution: true } });
+      assert.equal(result.isError, true);
+      assert.deepEqual([result.structuredContent.data.error.code, result.structuredContent.data.error.status], ['insufficient_balance', 402]);
+    } finally { await session.close(); }
+  } finally { await dir.close(); }
+});

@@ -110,6 +110,18 @@ export function loadWallet(env: NodeJS.ProcessEnv, transport: Config['transport'
   return { signer: keyfileSigner(data as Record<string, unknown>), receiver, btcli: btcliNames(path) };
 }
 
+/**
+ * The code of a flat refusal such as {"error":"insufficient_balance"}, the 402 body that Gamma services answer to
+ * signed requests. Only 4xx refusals other than 408, which leave no ambiguous outcome; nested bodies keep the usual parsing.
+ */
+export function flatRefusalCode(status: number, bytes: Uint8Array): string | undefined {
+  if (status < 400 || status >= 500 || status === 408) return undefined;
+  try {
+    const code: unknown = JSON.parse(Buffer.from(bytes).toString('utf8'))?.error;
+    return typeof code === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(code) ? code : undefined;
+  } catch { return undefined; }
+}
+
 /** Replace any bearer credential with btauth/1 headers addressed to the Reliquary service hotkey. */
 export function signWalletRequest(headers: Headers, wallet: Wallet, method: string, url: URL, body?: string | Uint8Array | null): void {
   headers.delete('Authorization');

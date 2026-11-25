@@ -1,6 +1,6 @@
 import { parseAffineBatchPrepared } from '@reliquary/api/affine-batches';
 import type { Config } from './config.js';
-import { signWalletRequest } from './wallet.js';
+import { flatRefusalCode, signWalletRequest } from './wallet.js';
 import type { ApiRequest } from './tools.js';
 import { parseGenerationResponse } from '@reliquary/api';
 import { parseNativePreparationCatalog, parseNativePreparationReview, parseNativePreparation, parseAffineEvaluationPrepared } from '@reliquary/api/affine-pilot';
@@ -133,6 +133,8 @@ export class ApiClient {
           if (error instanceof ApiError) throw new ApiError(error.code, response.status, retryKey, revision, requestId, retryAfterSeconds);
           throw error;
         }
+        const flat = flatRefusalCode(response.status, bytes);
+        if (flat) throw new ApiError(flat, response.status, retryKey, revision, requestId, retryAfterSeconds);
         if (!response.ok) {
           if (mutating && (response.status >= 500 || response.status === 408)) throw new ApiError('outcome_unknown', response.status, retryKey, revision, requestId, retryAfterSeconds);
           let code = `http_${response.status}`;
