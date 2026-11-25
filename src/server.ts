@@ -9,7 +9,7 @@ import { workflowText } from './workflows.js';
 import { availableBatchTools, registerBatchTools, type BatchToolDeps } from './batch.js';
 import { gammaConnection, gammaToolNames, registerGammaTools, type GammaToolDeps } from './gamma.js';
 
-export const version = '0.12.1';
+export const version = '0.13.0';
 export const affineLocalToolNames = ['reliquary_affine_batch_review', 'reliquary_affine_batch_plan'] as const;
 const outputSchema = z.object({ data: z.record(z.string(), z.unknown()) });
 function skillsCatalogFor(apiOrigin: string) {
