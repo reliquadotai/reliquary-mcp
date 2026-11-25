@@ -162,7 +162,7 @@ const monitoringSchema = z.strictObject({
 
 export const operations: Operation[] = [
   ...[
-    ['catalog', '/api/catalog', 'Read the public model, environment and resource catalog. Availability describes what can currently be offered.'],
+    ['catalog', '/api/catalog', 'Read reference examples (source: examples), approved execution-profile definitions and the reference training catalog. Example offers, prices, models and environments are illustrative, not live inventory or availability. Use reliquary_compute_catalog for observed GPU offers, and reliquary_generation_catalog or reliquary_evaluation_catalog for what can currently be ordered.'],
     ['health', '/api/health', 'Read service health. Health does not establish ordering or execution availability.'],
     ['readiness', '/api/ready', 'Read database and execution readiness, preserving upstream billing and availability gates.'],
     ['inventory', '/api/inventory', 'Read the public product inventory and qualification states.'],
