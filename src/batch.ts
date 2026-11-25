@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { createGenerationClient, createGenerationTransport, GenerationApiError, generationRequests, type GenerationOrderDetail } from '@reliquary/api';
@@ -14,6 +14,16 @@ const outputSchema = z.object({ data: z.record(z.string(), z.unknown()) });
 const id = z.string().regex(/^[\w-]{1,64}$/);
 const approved = z.literal(true).describe('Set only after the user explicitly approves this exact action.');
 const localPath = z.string().min(1).max(4096).refine(v => !/[\x00]/.test(v), 'Invalid path.');
+
+/**
+ * Whether the platform takes a local file's name: ASCII letters, digits, _ . ( ) - and space, at most 200
+ * characters and no leading dot. It refuses any other name without saying why, so the tool says it first.
+ */
+export function acceptedFileName(path: string): boolean {
+  const name = basename(path);
+  return /^[\w.() -]{1,200}$/.test(name) && !name.startsWith('.');
+}
+export const REFUSED_FILE_NAME = 'The platform stores a batch file only under a name of at most 200 characters made of ASCII letters, digits, spaces and _ . ( ) -, not starting with a dot. Rename the file, or copy it under such a name, then upload it.';
 
 export type BatchToolDeps = { transport?: ReturnType<typeof createGenerationTransport> };
 export type BatchTool = { name: string; write: boolean; local: boolean };
@@ -30,7 +40,7 @@ export function availableBatchTools(config: Config): BatchTool[] {
 }
 
 function failure(error: unknown) {
-  const safe = error instanceof ApiError ? { code: error.code, ...(error.status ? { status: error.status } : {}), ...(error.requestId ? { requestId: error.requestId } : {}) }
+  const safe = error instanceof ApiError ? { code: error.code, ...(error.status ? { status: error.status } : {}), ...(error.requestId ? { requestId: error.requestId } : {}), ...(error.serverMessage ? { message: error.serverMessage } : {}) }
     : error instanceof GenerationApiError ? { code: error.code, ...(error.status ? { status: error.status } : {}), ...(error.requestId ? { requestId: error.requestId } : {}),
       ...(error.message && !error.message.startsWith('API request failed') ? { message: error.message.slice(0, 300) } : {}) }
     : { code: 'request_failed', ...(error instanceof Error ? { message: error.message.slice(0, 300) } : {}) };
@@ -47,7 +57,7 @@ export function registerBatchTools(server: McpServer, config: Config, api: ApiCl
 
   if (offered.has('reliquary_batch_upload'))
     server.registerTool('reliquary_batch_upload', {
-      description: 'Upload a local OpenAI Batch JSONL file (at most 200 MB) in resumable parts, after the user confirms the data rights and approves the upload. Returns the file record and id for reliquary_batch_quote; never returns contents. To finish an interrupted upload pass its fileId.',
+      description: 'Upload a local OpenAI Batch JSONL file (at most 200 MB) in resumable parts, after the user confirms the data rights and approves the upload. Returns the file record and id for reliquary_batch_quote; never returns contents. The file is stored under its local name, which must be at most 200 characters made of ASCII letters, digits, spaces and _ . ( ) -, not starting with a dot: another name is refused with that reason before anything is sent. To finish an interrupted upload pass its fileId.',
       inputSchema: z.strictObject({ path: localPath.describe('The .jsonl file the user named.'), fileId: z.string().regex(/^file-[\w-]{1,80}$/).optional(),
         rightsConfirmed: z.literal(true).describe('The user confirmed they may send this data.'), approveExecution: approved }),
       outputSchema,
@@ -58,6 +68,7 @@ export function registerBatchTools(server: McpServer, config: Config, api: ApiCl
         if (!path.toLowerCase().endsWith('.jsonl')) throw new Error('Choose a .jsonl batch file.');
         const info = await stat(path);
         if (!info.isFile()) throw new Error('The path is not a file.');
+        if (!acceptedFileName(path)) throw new Error(REFUSED_FILE_NAME);
         const file = await withRequestSlot(() => uploadFile(transport(), path, { ...(args.fileId ? { fileId: args.fileId } : {}), signal: context.mcpReq.signal }));
         return success({ file });
       } catch (error) { return failure(error); }

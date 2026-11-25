@@ -62,6 +62,17 @@ test('the MCP runtime reports its package version and retains the pinned API', a
   assert.ok(OFFICIAL_SKILLS.some(skill => skill.id === 'reliquary-evaluation-file'));
 });
 
+test('Registry metadata identifies the same npm release and stdio transport', async () => {
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const registry = JSON.parse(await readFile(new URL('../server.json', import.meta.url), 'utf8'));
+  assert.equal(registry.name, pkg.mcpName);
+  assert.equal(registry.version, pkg.version);
+  assert.deepEqual(registry.packages, [{
+    registryType: 'npm', identifier: pkg.name, version: pkg.version, transport: { type: 'stdio' },
+  }]);
+  assert.equal(registry.repository.url, pkg.repository.url.replace(/^git\+/, '').replace(/\.git$/, ''));
+});
+
 test('batch quote takes an optional grader and checks it on the quote', async () => {
   const generation = generationRequests('key');
   const input = { model: 'Qwen/Qwen3-8B', revision: REV, input_file_id: FILE, grader: 'boxed_math_v1' };
@@ -137,6 +148,16 @@ test('the generation catalog tool keeps architectures', async () => {
   assert.deepEqual(catalog.architectures, liveCatalog.architectures);
   assert.equal((await new ApiClient(config, async () => Response.json({ ...liveCatalog, architectures: null })).request(op('generation_catalog').build({}))).architectures, null);
   assert.match(op('generation_catalog').description, /architectures/);
+});
+
+test('the general catalog is described as reference examples, not availability', () => {
+  const { description } = op('catalog');
+  assert.match(description, /source: examples/);
+  assert.match(description, /not live inventory or availability/);
+  for (const tool of ['compute_catalog', 'generation_catalog', 'evaluation_catalog']) {
+    assert.ok(op(tool), tool);
+    assert.match(description, new RegExp('reliquary_' + tool));
+  }
 });
 
 test('evaluation quotes accept the namespaced environment ids of the live catalog', () => {

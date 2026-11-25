@@ -162,9 +162,9 @@ const monitoringSchema = z.strictObject({
 
 export const operations: Operation[] = [
   ...[
-    ['catalog', '/api/catalog', 'Read the public model, environment and resource catalog. Availability describes what can currently be offered.'],
+    ['catalog', '/api/catalog', 'Read reference examples (source: examples), approved execution-profile definitions and the reference training catalog. Example offers, prices, models and environments are illustrative, not live inventory or availability. Use reliquary_compute_catalog for observed GPU offers, and reliquary_generation_catalog or reliquary_evaluation_catalog for what can currently be ordered.'],
     ['health', '/api/health', 'Read service health. Health does not establish ordering or execution availability.'],
-    ['readiness', '/api/ready', 'Read database and execution readiness, preserving upstream billing and availability gates.'],
+    ['readiness', '/api/ready', 'Read whether the platform database answers (ready) and two fields about private training runs only: execution (pilot or disabled) says whether training dispatch, training billing and an approved training profile are all in place; pilot does not mean private training is open to customers, which the workflow text lists as not yet available; billing (service-credits, operator-funded-pilot or unavailable) says how such a run is funded. Neither field describes Batch or evaluations, their availability, their prices or how they are billed: read any_model_ordering in reliquary_generation_catalog for Batch and for evaluations on a file, and ordering in reliquary_evaluation_catalog for evaluations on catalog sets.'],
     ['inventory', '/api/inventory', 'Read the public product inventory and qualification states.'],
     ['network', '/api/network', 'Read the published public network projection with freshness and provenance.'],
     ['run_catalog', '/api/monitoring/runs', 'List published public training runs and their stored availability. Use only returned run identifiers; customer tasks remain separately scoped.'],
@@ -252,7 +252,7 @@ export const operations: Operation[] = [
     }, 'orders', { write: true }),
   operation('batch_order', 'Order exactly one reviewed batch file quote after explicit user approval. This may reserve or spend credits and enqueue work. Reuse the same request key after an ambiguous result.', z.strictObject({ quoteId: id, idempotencyKey: key, approveExecution: approved }),
     ({ quoteId, idempotencyKey }) => ({ ...generation.create(quoteId, idempotencyKey), generationResponse: 'order' }), 'orders', { write: true, spend: true }),
-  operation('batch_file_get', 'Read an owned batch input file record (size, name, upload status and, once processed, its sha256). Never returns its contents.', z.strictObject({ fileId: batchFileId }),
+  operation('batch_file_get', 'Read an owned batch input file record: size, name, upload status and, for a processed file, sha256. A file uploaded in parts, as reliquary_batch_upload does, has sha256 null until a quote (reliquary_batch_quote) has read it; a quote refused as invalid_batch_file does not set it. Never returns its contents.', z.strictObject({ fileId: batchFileId }),
     ({ fileId }) => ({ path: batchFiles.get(fileId).path }), 'orders'),
   operation('generation_balance', 'Read service-credit balance and recent ledger entries using the generation credential. No credits are reserved by this read.', empty,
     () => ({ path: '/api/v1/balance' }), 'orders'),

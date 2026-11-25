@@ -1,0 +1,184 @@
+name: Publish
+
+# Releases @reliquadotai/mcp through npm trusted publishing (OIDC). No long-lived npm token is stored.
+# npm accepts this workflow only after a maintainer registers it as a trusted publisher of the
+# package with the `npm` environment, whose deployment branches are limited to `main`.
+# See CONTRIBUTING.md, "Maintainer release handoff".
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release; must equal package.json and server.json
+        required: true
+        type: string
+      tarball_sha256:
+        description: SHA-256 of the reviewed npm pack tarball (official Node.js 24.21.0 build)
+        required: true
+        type: string
+      mode:
+        description: stage waits for a maintainer to approve the version on npm with 2FA; publish needs the trusted publisher to allow npm publish
+        required: true
+        type: choice
+        default: stage
+        options:
+          - stage
+          - publish
+
+permissions: {}
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PACKAGE: '@reliquadotai/mcp'
+  VERSION: ${{ inputs.version }}
+  EXPECTED_SHA256: ${{ inputs.tarball_sha256 }}
+  MODE: ${{ inputs.mode }}
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check the inputs
+        run: |
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::version must be MAJOR.MINOR.PATCH"; exit 1; }
+          [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::tarball_sha256 must be 64 lowercase hexadecimal characters"; exit 1; }
+          [[ "$MODE" == stage || "$MODE" == publish ]] || { echo "::error::mode must be stage or publish"; exit 1; }
+      # npm matches the repository, the workflow file and the environment, never the branch. The
+      # environment's branch rule is what keeps a modified copy of this workflow away from npm, so
+      # refuse to run, and never let the publish job create the environment, unless that rule is set.
+      - name: Require the npm environment to deploy from main only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          policy=$(gh api "repos/$GITHUB_REPOSITORY/environments/npm" --jq '.deployment_branch_policy | "\(.protected_branches) \(.custom_branch_policies)"') \
+            || { echo "::error::the npm environment does not exist; create it as CONTRIBUTING.md describes"; exit 1; }
+          [ "$policy" = "false true" ] || { echo "::error::the npm environment must allow selected branches only"; exit 1; }
+          rules=$(gh api "repos/$GITHUB_REPOSITORY/environments/npm/deployment-branch-policies" --jq '[.branch_policies[] | "\(.type):\(.name)"] | join(",")')
+          [ "$rules" = "branch:main" ] || { echo "::error::the npm environment must allow the main branch only, not $rules"; exit 1; }
+      - name: Require a successful Verification run on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event push --commit "$GITHUB_SHA" --status success --json databaseId --jq length)
+          [ "$runs" -ge 1 ] || { echo "::error::no successful push Verification run for $GITHUB_SHA"; exit 1; }
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Check the release metadata
+        run: |
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+            const server = JSON.parse(readFileSync("server.json", "utf8"));
+            const { PACKAGE, VERSION } = process.env;
+            const ok = pkg.name === PACKAGE && pkg.version === VERSION && server.version === VERSION
+              && server.packages.length > 0 && server.packages.every(entry => entry.identifier === PACKAGE && entry.version === VERSION);
+            if (!ok) {
+              console.log(`::error::package.json (${pkg.name}@${pkg.version}) and server.json (${server.version}) must both release ${PACKAGE}@${VERSION}`);
+              process.exit(1);
+            }
+          '
+      - name: Refuse a version that npm already has
+        run: |
+          if out=$(npm view "$PACKAGE@$VERSION" version 2>&1); then
+            echo "::error::$PACKAGE@$VERSION is already on npm"; exit 1
+          elif ! grep -q E404 <<<"$out"; then
+            printf '%s\n' "$out"; echo "::error::could not read $PACKAGE from npm"; exit 1
+          fi
+      - run: npm ci
+      - run: npm run check
+      - name: Pack and compare with the reviewed tarball
+        run: |
+          mkdir "$RUNNER_TEMP/release"
+          npm pack --pack-destination "$RUNNER_TEMP/release"
+          [ "$(ls "$RUNNER_TEMP/release")" = "reliquadotai-mcp-$VERSION.tgz" ] || { echo "::error::npm pack did not produce exactly reliquadotai-mcp-$VERSION.tgz"; exit 1; }
+          actual=$(sha256sum "$RUNNER_TEMP/release/reliquadotai-mcp-$VERSION.tgz" | cut -d' ' -f1)
+          {
+            echo "### $PACKAGE@$VERSION"
+            echo "- commit: \`$GITHUB_SHA\`"
+            echo "- tarball sha256: \`$actual\`"
+            echo "- mode: $MODE"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$actual" = "$EXPECTED_SHA256" ] || { echo "::error::tarball sha256 $actual is not the reviewed $EXPECTED_SHA256"; exit 1; }
+      # Kept long enough for an environment reviewer: GitHub fails a deployment left unapproved for 30 days.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-tarball
+          path: ${{ runner.temp }}/release/
+          retention-days: 30
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    # npm trusted publishing accepts GitHub-hosted runners only. This job can request the npm identity,
+    # which npm exchanges for a short-lived token, so it checks out nothing and runs no package or
+    # dependency code: only setup-node, download-artifact and the npm CLI itself.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24.21.0'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-tarball
+          path: ${{ runner.temp }}/release
+      - name: Check the tarball and the npm CLI
+        run: |
+          tarball="$RUNNER_TEMP/release/reliquadotai-mcp-$VERSION.tgz"
+          echo "$EXPECTED_SHA256  $tarball" | sha256sum --check --strict
+          npm_version=$(npm --version)
+          node -e 'const [major, minor] = process.argv[1].split(".").map(Number); process.exit(major > 11 || (major === 11 && minor >= 15) ? 0 : 1)' "$npm_version" \
+            || { echo "::error::npm $npm_version cannot stage a release; 11.15.0 or later is required"; exit 1; }
+          echo "TARBALL=$tarball" >> "$GITHUB_ENV"
+      # Verbose logging names the cause when npm cannot exchange the GitHub identity, for example a
+      # trusted publisher field that does not match; npm redacts tokens in its logs.
+      - name: Stage or publish with npm trusted publishing
+        run: |
+          if [ "$MODE" = publish ]; then
+            npm publish "$TARBALL" --access public --loglevel verbose
+          else
+            npm stage publish "$TARBALL" --access public --loglevel verbose
+            echo "- staged: once npm has scanned it, a maintainer approves it under Staged Packages on npmjs.com, or with \`npm stage approve <stage-id>\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # npm scans a new version before it can be installed (about five minutes, longer at peak), so a
+      # version that is not readable yet is reported, not treated as a failure. A readable version must
+      # carry the reviewed tarball's integrity.
+      - name: Confirm the published tarball
+        if: env.MODE == 'publish'
+        run: |
+          want="sha512-$(openssl dgst -sha512 -binary "$TARBALL" | openssl base64 -A)"
+          echo "- expected npm integrity: \`$want\`" >> "$GITHUB_STEP_SUMMARY"
+          got=
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            got=$(npm view "$PACKAGE@$VERSION" dist.integrity --prefer-online 2>/dev/null) && [ -n "$got" ] && break
+            got=
+            sleep 10
+          done
+          if [ -z "$got" ]; then
+            echo "::notice::$PACKAGE@$VERSION is not readable on npm yet, probably still being scanned; compare its dist.integrity with $want later"
+            exit 0
+          fi
+          echo "- npm integrity: \`$got\`" >> "$GITHUB_STEP_SUMMARY"
+          [ "$got" = "$want" ] || { echo "::error::npm reports $got for $PACKAGE@$VERSION, the reviewed tarball is $want"; exit 1; }

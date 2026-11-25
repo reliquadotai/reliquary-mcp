@@ -60,3 +60,17 @@ jobs:
             sleep 1
           done
           exit 1
+
+  windows-package:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run build
+      - name: Install the offline package and read MCP tools and resources over stdio
+        run: node --test test/packed-install.test.mjs
