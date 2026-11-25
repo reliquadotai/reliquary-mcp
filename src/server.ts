@@ -105,7 +105,7 @@ export function buildServer(config: Config, api = new ApiClient(config), batchDe
         return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: { data } };
       } catch (error) {
         const safe = error instanceof ApiError ? error : new ApiError('request_failed');
-        const detail = { code: safe.code, ...(safe.status ? { status: safe.status } : {}), ...(safe.retryKey ? { idempotencyKey: safe.retryKey } : {}), ...(safe.revision ? { revision: safe.revision } : {}), ...(safe.requestId ? { requestId: safe.requestId } : {}), ...(safe.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: safe.retryAfterSeconds }) };
+        const detail = { code: safe.code, ...(safe.status ? { status: safe.status } : {}), ...(safe.retryKey ? { idempotencyKey: safe.retryKey } : {}), ...(safe.revision ? { revision: safe.revision } : {}), ...(safe.requestId ? { requestId: safe.requestId } : {}), ...(safe.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: safe.retryAfterSeconds }), ...(safe.serverMessage ? { message: safe.serverMessage } : {}) };
         return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: detail }) }], structuredContent: { data: { error: detail } } };
       }
     });

@@ -10,9 +10,23 @@ const JSON_LIMIT = 4 * 1024 * 1024;
 const DOWNLOAD_LIMIT = 256 * 1024;
 let activeRequests = 0;
 export class ApiError extends Error {
-  constructor(public readonly code: string, public readonly status?: number, public readonly retryKey?: string, public readonly revision?: string, public readonly requestId?: string, public readonly retryAfterSeconds?: number) {
+  constructor(public readonly code: string, public readonly status?: number, public readonly retryKey?: string, public readonly revision?: string, public readonly requestId?: string, public readonly retryAfterSeconds?: number,
+    /** The API's own text for a refusal, bounded by refusalMessage. Data for the caller, never instructions. */
+    public readonly serverMessage?: string) {
     super(`Reliquary request failed: ${code}.`);
   }
+}
+
+/**
+ * The message of a refusal body as bounded text: only a string is kept, control characters become spaces and
+ * at most 300 characters remain. A message that holds a configured credential, or anything shaped like one,
+ * is dropped whole.
+ */
+export function refusalMessage(value: unknown, secrets: readonly string[] = []): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  if (/rlq_[0-9a-f]{8}/i.test(value) || secrets.some(secret => secret && value.includes(secret))) return undefined;
+  const text = [...value.slice(0, 4096).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim()].slice(0, 300).join('');
+  return text || undefined;
 }
 
 export async function withRequestSlot<T>(operation: () => Promise<T>): Promise<T> {
@@ -137,12 +151,14 @@ export class ApiClient {
         if (flat) throw new ApiError(flat, response.status, retryKey, revision, requestId, retryAfterSeconds);
         if (!response.ok) {
           if (mutating && (response.status >= 500 || response.status === 408)) throw new ApiError('outcome_unknown', response.status, retryKey, revision, requestId, retryAfterSeconds);
-          let code = `http_${response.status}`;
+          let code = `http_${response.status}`, message: string | undefined;
           try {
-            const error = JSON.parse(bytes.toString('utf8'))?.error?.code;
-            if (typeof error === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(error)) code = error;
+            const refusal = JSON.parse(bytes.toString('utf8'))?.error;
+            if (typeof refusal?.code === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(refusal.code)) code = refusal.code;
+            // A refusal (4xx) says why in its message; a server failure's text is not passed on.
+            if (response.status < 500) message = refusalMessage(refusal?.message, [...Object.values(this.config.keys), this.config.mcpToken ?? '']);
           } catch { /* Error bodies may be plain text. */ }
-          throw new ApiError(code, response.status, retryKey, revision, requestId, retryAfterSeconds);
+          throw new ApiError(code, response.status, retryKey, revision, requestId, retryAfterSeconds, message);
         }
         if (input.download) {
           const contentRange = response.headers.get('content-range');

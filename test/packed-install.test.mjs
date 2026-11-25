@@ -10,7 +10,12 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { OFFICIAL_SKILLS } from '@reliquary/api';
 
 const run = (args, cwd) => new Promise((resolve, reject) => {
-  const child = spawn('npm', args, { cwd });
+  // Windows supplies npm as a command shim. Run its JS entry with Node so paths
+  // stay separate arguments and never require a shell.
+  const bundledNpm = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  const child = process.platform === 'win32'
+    ? spawn(process.execPath, [process.env.npm_execpath ?? bundledNpm, ...args], { cwd })
+    : spawn('npm', args, { cwd });
   let out = '', err = '';
   child.stdout.on('data', data => { out += data; });
   child.stderr.on('data', data => { err += data; });
@@ -22,7 +27,7 @@ test('pinned tarball installs without private repository access and exposes read
   const temp = await mkdtemp(join(tmpdir(), 'mcp-package-'));
   let transport;
   try {
-    const packed = await run(['pack', '--ignore-scripts', '--json', '--pack-destination', temp], root);
+    const packed = await run(['pack', '--ignore-scripts', '--json', '--cache', join(temp, 'pack-cache'), '--pack-destination', temp], root);
     assert.equal(packed.code, 0, packed.err);
     const name = JSON.parse(packed.out)[0].filename;
     const install = await run([
