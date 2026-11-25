@@ -152,7 +152,7 @@ function locate(spec: Record<string, unknown>): Located[] {
   const swagger = typeof spec.swagger === 'string';
   const located: Located[] = [];
   for (const [pathKey, value] of Object.entries(record(spec.paths) ?? {})) {
-    const item = record(value), path = clip(pathKey, 512);
+    const item = deref(spec, value), path = clip(pathKey, 512);
     if (!item || !path) continue;
     for (const method of METHODS) {
       const op = record(item[method]);
@@ -354,7 +354,7 @@ export class OpenApiSpec {
     const id = clip(view.operationId, 200), path = clip(view.path, 512);
     const found = this.#located().find(({ entry }) => id !== undefined ? entry.operationId === id : entry.method === view.method && entry.path === path);
     if (!found) return undefined;
-    const item = record(record(this.spec.paths)?.[found.pathKey]) ?? {};
+    const item = deref(this.spec, record(this.spec.paths)?.[found.pathKey]) ?? {};
     const op = record(item[found.method]) ?? {};
     const { method: _method, path: _path, parameters: _parameters, security: _security, consumes: _consumes, produces: _produces, ...rest } = op;
     const parameters = mergeParameters(this.spec, item.parameters, op.parameters);

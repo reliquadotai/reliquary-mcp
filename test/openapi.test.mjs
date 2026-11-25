@@ -94,6 +94,12 @@ test('local refs follow JSON Pointer with fragment encoding, own properties only
   for (const ref of ['#/components/schemas/Nope', '#/constructor', '#/components/schemas/toString', '#/servers/01', '#/servers/9', '#/servers/-1', '#/a%ZZ', 'other.json#/x', '#components']) {
     assert.equal(pointer(PETS, ref), undefined, ref);
   }
+  // OpenAPI 3.1 lets a path item be a ref; an external one is not followed.
+  const reused = load({ openapi: '3.1.0', paths: { '/v2/pets': { $ref: '#/components/pathItems/Pets' }, '/remote': { $ref: 'https://elsewhere.example/item.json' } },
+    components: { pathItems: { Pets: { parameters: [{ name: 'tenant', in: 'header' }], get: { operationId: 'listPetsV2', responses: {} } } } } });
+  assert.deepEqual(reused.index(view()).operations.map(o => [o.path, o.operationId]), [['/v2/pets', 'listPetsV2']]);
+  const v2 = reused.operation(view({ operationId: 'listPetsV2', depth: 8 })).operation;
+  assert.deepEqual([v2.path, v2.parameters], ['/v2/pets', [{ name: 'tenant', in: 'header' }]]);
 });
 
 test('the index lists every operation compactly with inherited security, referenced content types and spec info', () => {
