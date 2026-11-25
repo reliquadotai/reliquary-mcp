@@ -2,9 +2,12 @@
 
 ## Developer preview installation
 
-The [developer hub](https://app.reliqua.ai/docs/agents/mcp) provides the checksum-pinned 0.12.0 preview tarball and setup instructions. This MIT-licensed server requires Node.js 22 or later. Report suspected vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Download and verify the 0.12.0 archive using the developer hub, then install it:
+The [developer hub](https://app.reliqua.ai/docs/agents/mcp) provides the 0.12.0 preview tarball and setup instructions. This MIT-licensed server requires Node.js 22 or later. Report suspected vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Download the archive and verify its pinned SHA-256 before installing it:
 
 ```sh
+curl --fail --show-error --location --output reliquary-mcp-0.12.0.tgz \
+  https://app.reliqua.ai/downloads/reliquary-mcp-0.12.0.tgz && \
+node --input-type=module -e 'import { readFileSync } from "node:fs"; import { createHash } from "node:crypto"; import assert from "node:assert/strict"; assert.equal(createHash("sha256").update(readFileSync("reliquary-mcp-0.12.0.tgz")).digest("hex"), "b6170f61e952c9c3eb923ed195ea132465cc1c67e941a199e7cf214e2d31bee1");' && \
 npm install --global ./reliquary-mcp-0.12.0.tgz
 ```
 
@@ -18,7 +21,7 @@ When upgrading, check that `npm ls --global --depth=0 @reliquary/mcp` identifies
 
 The tarball bundles its pinned API dependency and needs no private repository access. Configure a compatible stdio host with command `reliquary-mcp` and environment `RELIQUARY_ENABLE_WRITES=false`, then call `reliquary_connection`. Public discovery requires no API key; host PATH configuration may be necessary. [Setup guide](https://app.reliqua.ai/docs/agents/mcp).
 
-The source candidate also supports hosted batch request preparation through `reliquary_affine_batch_prepare`, using a fresh owned qualified profile from `reliquary_training_capabilities`. It requires the training key and enabled writes but computes nothing. Upload only its exact returned request as `JSON.stringify(request)+'\n'` with `reliquary_training_upload`, format `affine_batch_request`, and confirmed data rights; this metadata is limited to 4 KiB. Raw batch files stay in the separately reviewed official-kit workflow. Save the returned configuration plus the uploaded dataset ID using `reliquary_resource_create` (separate resources authority), then use the saved revision with `reliquary_training_start`, explicit approval and a stable request key. An explicitly available operator-funded pilot omits `quoteId`. Generic training drafts and the older native diagnostic tools remain separate. Read the batch task/result and ranged artifacts through existing training tools; assemble and independently verify the signed receipt and archive using the SDK example. No signature-verification tool or automatic execution is provided. This source support does not establish hosted publication, qualification or capacity.
+The server also supports hosted batch request preparation through `reliquary_affine_batch_prepare`, using a fresh owned qualified profile from `reliquary_training_capabilities`. It requires the training key and enabled writes but computes nothing. Upload only its exact returned request as `JSON.stringify(request)+'\n'` with `reliquary_training_upload`, format `affine_batch_request`, and confirmed data rights; this metadata is limited to 4 KiB. Raw batch files stay in the separately reviewed official-kit workflow. Save the returned configuration plus the uploaded dataset ID using `reliquary_resource_create` (separate resources authority), then use the saved revision with `reliquary_training_start`, explicit approval and a stable request key. An explicitly available operator-funded pilot omits `quoteId`. Generic training drafts and the older native diagnostic tools remain separate. Read the batch task/result and ranged artifacts through existing training tools; assemble and independently verify the signed receipt and archive using the SDK example. No signature-verification tool or automatic execution is provided. This source support does not establish hosted publication, qualification or capacity.
 
 This preview retains the existing single-account protocol, fixed tool registry and disabled-by-default writes. API dependency compatibility is independent of the customer CLI package version. Existing scoped credentials, product grants and qualified execution remain authoritative. Discover the complete official workflow catalog with `reliquary_skills`; filter by `search`, `category`, exact `id` or `state`. `state: not-yet-available` (listed in `notYetAvailable`) marks workflows whose product is not open yet; their `availability` note says what to use instead. The tool reads the installed catalog without credentials or upstream requests. Entries retain their documented access and qualification requirements. Install the separate official skills only when your assistant supports them; MCP works without the CLI.
 
@@ -59,7 +62,7 @@ For a client with a `mcpServers` configuration, set `command` to `node`, `args` 
 }
 ```
 
-The installed 0.6 catalog includes public run selection, RL progress, held-out benchmarks, raw response-token composition and declared GPU participation through `reliquary_run_catalog` and `reliquary_run_monitor`. These are stored public observations, separate from owned training tasks. Instruction links are immutable and versioned; check the release manifest on the selected origin. Reconnect a running host after upgrading and verify the runtime-reported version. SDK transport tests do not qualify every assistant host.
+The installed catalog includes public run selection, RL progress, held-out benchmarks, raw response-token composition and declared GPU participation through `reliquary_run_catalog` and `reliquary_run_monitor`. These are stored public observations, separate from owned training tasks. Instruction links are immutable and versioned; check the release manifest on the selected origin. Reconnect a running host after upgrading and verify the runtime-reported version. SDK transport tests do not qualify every assistant host.
 
 ## Access and coverage
 
@@ -158,10 +161,10 @@ When ready, prepare the exact native request, upload it after rights confirmatio
 
 For an isolated pilot, set `RELIQUARY_API_URL` to the exact pilot origin. Discovery resolves documentation and immutable skill links against that origin. These are configured references, not fetched or verified publication evidence; the default production API continues to use the production documentation origin. Do not use pilot packages or credentials as evidence of production availability.
 
-## Local official batch preparation (0.8 source candidate)
+## Local official batch preparation
 
 `reliquary_affine_batch_review` and `reliquary_affine_batch_plan` are local read-only tools, available without a training key or write enablement. Each accepts raw `batchJson` and `miningJson` strings up to 1 MiB, plus the intended `hotkey`. The SDK accepts complete batches up to 64 MiB. No paths, credentials, network, upload, process execution or paid endpoint is added. The existing MCP message cap remains unchanged.
 
 Planning adds independent `head`/`reference` descriptor digests, explicit `master` (`provided` or `bf16-bootstrap`), `seed`, `prior` (`provided` or `env-average`), `trainingResultAt` and `lastGreenDecidedAt`. It returns input-bound metadata and placeholder argv for official tokenizer validation, one GRPO step and parent/candidate comparison on a separately selected owned host. Keep generated plans and batch contents private. CPU tiny commands demonstrate plumbing only; full tokenizer checks remain not_run, and qualification, live parity, official acceptance and chain submission are not established.
 
-Use the bundled `reliquary-affine-batches` instructions and [pinned official miner guide](https://github.com/AffineFoundation/affine/blob/a59734f8a7a494c46df47ca3955cc7f594ec6bc0/miner/README.md). This 0.10 package is a private source candidate; no hosted 0.10 publication is asserted. The 0.7 checkpoint diagnostic stays separate and does not implement this batch workflow.
+Use the bundled `reliquary-affine-batches` instructions and [pinned official miner guide](https://github.com/AffineFoundation/affine/blob/a59734f8a7a494c46df47ca3955cc7f594ec6bc0/miner/README.md). Local preparation does not establish hosted execution support or capacity. The checkpoint diagnostic stays separate and does not implement this batch workflow.
