@@ -14,7 +14,7 @@ import { ApiClient } from '../dist/api.js';
 import { loadConfig } from '../dist/config.js';
 import { buildServer } from '../dist/server.js';
 import { operations } from '../dist/tools.js';
-import { DEFAULT_GAMMA_RECEIVER, loadWallet, WalletConfigError } from '../dist/wallet.js';
+import { DEFAULT_GAMMA_RECEIVER, loadWallet, WALLET_TRANSPORT_KEY, WalletConfigError, walletFetch } from '../dist/wallet.js';
 import { createVerifier, initBody } from './support/btauth-verifier.mjs';
 
 // Test-only key material: a fixed seed and the public development phrase. Never a real hotkey.
@@ -287,4 +287,70 @@ test('a flat Gamma refusal keeps its code, so a signed order without balance rep
       assert.deepEqual([result.structuredContent.data.error.code, result.structuredContent.data.error.status], ['insufficient_balance', 402]);
     } finally { await session.close(); }
   } finally { await dir.close(); }
+});
+
+test('the wallet fetch nests flat Gamma refusals for the packaged transport and leaves every other answer intact', async () => {
+  const dir = await walletDir();
+  try {
+    const config = loadConfig({ RELIQUARY_HOTKEY_FILE: await dir.write('reliquary', keyfile(SR)) });
+    let reply;
+    const signedFetch = walletFetch(config.wallet, async () => reply());
+    const url = 'https://api.reliqua.ai/api/v1/files';
+    const signed = { method: 'POST', body: '{}', headers: { Authorization: `Bearer ${WALLET_TRANSPORT_KEY}` } };
+    const answer = async (response, init = signed) => {
+      reply = () => response;
+      const out = await signedFetch(url, init);
+      return [out.status, Buffer.from(await out.arrayBuffer())];
+    };
+    const flat = { error: 'insufficient_balance', message: 'Spend SN81 gamma first.', balance: { remaining_usd: '0' }, pay: { netuid: 81 } };
+    // A flat refusal is nested, keeping its other fields, whether or not the answer declares its length.
+    const streamed = () => new Response(new Blob([JSON.stringify(flat)]).stream(), { status: 402, headers: { 'Content-Type': 'application/json' } });
+    for (const response of [Response.json(flat, { status: 402 }), streamed()]) {
+      const [status, bytes] = await answer(response);
+      assert.equal(status, 402);
+      assert.deepEqual(JSON.parse(bytes), { ...flat, error: { code: 'insufficient_balance', message: 'Spend SN81 gamma first.' } });
+    }
+    const [, stale] = await answer(Response.json({ error: 'stale_request' }, { status: 401 }));
+    assert.deepEqual(JSON.parse(stale), { error: { code: 'stale_request' } });
+    // Nested codes, non-codes, server errors, timeouts, successes and long bodies pass through byte for byte.
+    const long = Buffer.from('x'.repeat(100 * 1024));
+    const passThrough = [[JSON.stringify({ error: { code: 'not_found' } }), 404], [JSON.stringify({ error: 'Not a code' }), 400],
+      [JSON.stringify(flat), 500], [JSON.stringify(flat), 408], [JSON.stringify({ id: 'file-1' }), 200], [long, 413]];
+    for (const [body, status] of passThrough) {
+      const [got, bytes] = await answer(new Response(body, { status }));
+      assert.equal(got, status);
+      assert.deepEqual(bytes, Buffer.from(body), String(status));
+    }
+    // An unsigned public read is never rewritten.
+    const [, unsigned] = await answer(Response.json(flat, { status: 402 }), { method: 'GET' });
+    assert.deepEqual(JSON.parse(unsigned), flat);
+  } finally { await dir.close(); }
+});
+
+test('a batch upload without balance reports insufficient_balance through the packaged transport', async () => {
+  const dir = await walletDir();
+  const verify = createVerifier({ receiver: DEFAULT_GAMMA_RECEIVER, maxBodyBytes: 5 * 1024 * 1024 });
+  const server = createServer((request, response) => {
+    const chunks = [];
+    request.on('data', chunk => chunks.push(chunk));
+    request.on('end', async () => {
+      const json = (status, value) => { response.statusCode = status; response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(value)); };
+      try {
+        await verify({ method: request.method, url: `http://127.0.0.1:${server.address().port}${request.url}`, headers: request.headers }, new Uint8Array(Buffer.concat(chunks)));
+      } catch (error) { return json(401, { error: { code: error.code ?? 'unsigned' } }); }
+      return json(402, { error: 'insufficient_balance', message: 'Spend SN81 gamma first.', pay: { netuid: 81, service_hotkey: DEFAULT_GAMMA_RECEIVER } });
+    });
+  });
+  await new Promise(done => server.listen(0, '127.0.0.1', done));
+  try {
+    const config = loadConfig({ RELIQUARY_HOTKEY_FILE: await dir.write('reliquary', keyfile(SR)), RELIQUARY_ENABLE_WRITES: 'true',
+      RELIQUARY_ALLOW_LOCAL_HTTP: 'true', RELIQUARY_API_URL: `http://127.0.0.1:${server.address().port}` });
+    const session = await memory(config);
+    try {
+      await writeFile(join(dir.root, 'requests.jsonl'), '{"custom_id":"x","method":"POST","url":"/v1/chat/completions","body":{}}\n');
+      const result = await session.client.callTool({ name: 'reliquary_batch_upload', arguments: { path: join(dir.root, 'requests.jsonl'), rightsConfirmed: true, approveExecution: true } });
+      assert.equal(result.isError, true, JSON.stringify(result));
+      assert.deepEqual([result.structuredContent.data.error.code, result.structuredContent.data.error.status], ['insufficient_balance', 402]);
+    } finally { await session.close(); }
+  } finally { await new Promise(done => server.close(done)); await dir.close(); }
 });
