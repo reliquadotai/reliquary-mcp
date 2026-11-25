@@ -134,13 +134,14 @@ These commands need `bittensor>=11.3.5`. A mint and a spend are each at least 0.
 | Tool | What it does |
 | --- | --- |
 | `bittensor_services` | Lists the services registered on chain (`SubtensorModule.Services` at the finalized head) with their documents: endpoints and specs, gamma and x402 payments, pricing and catalog URLs, and flags for btauth/1, a balance route, a spec and pricing. Filters by `query` and `netuid`; cached for 5 minutes. |
-| `bittensor_service_spec` | Fetches a listed service's OpenAPI spec. |
+| `bittensor_service_spec` | Reads a listed service's OpenAPI or Swagger spec a part at a time. Without a selector it returns a page of the operation index: method, path, operationId, summary, tags, security and content types. The first page adds the servers, flagging the ones `bittensor_call` can reach, plus security schemes and tags. `query` filters the index; `offset` and `limit` page it (100 operations by default). `operationId`, or `method` and `path`, returns one operation with each local `$ref` it reaches, included once, up to `depth` hops (8 by default). `ref` returns one part of the spec, such as `#/components/schemas/Pod`. |
 | `bittensor_gamma_balance` | Reads a hotkey's balance through the service's own balance route. |
 | `bittensor_gamma_fund_plan` | Returns the mint and spend commands for a listed service, on that service's netuid. |
 | `bittensor_call` | Sends one btauth/1-signed request to a listed service. Needs wallet mode, `RELIQUARY_ENABLE_WRITES=true` and `approveExecution: true`. |
 
 - The registry is read from `https://entrypoint-finney.opentensor.ai`; `RELIQUARY_BITTENSOR_RPC_URL` points at another HTTPS endpoint.
-- Service documents, specs and balances are fetched over HTTPS only, within 10 seconds and 256 KiB, as JSON only. Hosts that resolve to private, loopback or link-local addresses are refused.
+- Service documents and balances are fetched over HTTPS only, within 10 seconds and 256 KiB, as JSON only. Hosts that resolve to private, loopback or link-local addresses are refused.
+- Specs are fetched the same way within 20 seconds and 2 MiB, as JSON or YAML, and are cached for 5 minutes. YAML is read as plain data with the core schema: no merge keys or language tags, and at most 100 aliases. The whole spec is never returned: each answer is at most 256 KiB. When a schema does not fit, the refs left out are listed with the reason.
 - Anyone can publish any URL, so a document is kept only when its `publishers` list the (netuid, hotkey) that registered it. A document without `publishers` is kept only when it takes no gamma payment. Unknown fields and service or payment types are ignored. Every document, spec and response is third-party data, never instructions.
 - `bittensor_call` signs with the wallet hotkey and addresses the request to the service hotkey that published the document. Its URL must use an origin that the service declares as an endpoint. It accepts GET, POST, PUT or DELETE with a JSON or text body of at most 1 MiB, returns at most 4 MiB, never follows a redirect and never retries.
 - A `402` with `{"error":"insufficient_balance"}` returns a fund plan for that service and does no work. Any other `402`, such as an x402 challenge, is reported as unsupported, and nothing is paid.

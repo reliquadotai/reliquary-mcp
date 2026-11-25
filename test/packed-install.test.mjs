@@ -22,7 +22,8 @@ const run = (args, cwd) => new Promise((resolve, reject) => {
   child.on('error', reject);
   child.on('close', code => resolve({ code, out, err }));
 });
-test('pinned tarball installs without private repository access and exposes read-only stdio tools', { timeout: 90_000 }, async () => {
+// Packing and installing the bundled closure (sr25519 crypto, YAML) takes 70 to 80 s on a hosted Windows runner.
+test('pinned tarball installs without private repository access and exposes read-only stdio tools', { timeout: 180_000 }, async () => {
   const root = resolve(import.meta.dirname, '..');
   const temp = await mkdtemp(join(tmpdir(), 'mcp-package-'));
   let transport;
