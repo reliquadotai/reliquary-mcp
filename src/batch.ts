@@ -6,6 +6,7 @@ import { createGenerationClient, createGenerationTransport, GenerationApiError, 
 import { downloadDelivery, uploadFile } from '@reliquary/api/node';
 import { ApiClient, ApiError, withRequestSlot } from './api.js';
 import type { Config } from './config.js';
+import { orderTransportAuth } from './wallet.js';
 
 // Batch tools that touch the customer's disk (upload a JSONL, write a delivery) run only in a local stdio
 // process: a hosted HTTP connector cannot read or write the customer's files. No tool returns file contents.
@@ -24,7 +25,7 @@ export const batchTools: BatchTool[] = [
 
 /** The batch tools this connection offers: an orders key, writes for uploads, a local process for disk access. */
 export function availableBatchTools(config: Config): BatchTool[] {
-  if (!config.keys.orders) return [];
+  if (!config.keys.orders && !config.wallet) return [];
   return batchTools.filter(tool => (!tool.write || config.enableWrites) && (!tool.local || config.transport === 'stdio'));
 }
 
@@ -39,7 +40,7 @@ const success = (data: Record<string, unknown>) => ({ content: [{ type: 'text' a
 
 export function registerBatchTools(server: McpServer, config: Config, api: ApiClient, deps: BatchToolDeps = {}): void {
   const offered = new Set(availableBatchTools(config).map(tool => tool.name));
-  const transport = () => deps.transport ?? createGenerationTransport({ origin: config.apiUrl, apiKey: config.keys.orders!, timeoutMs: config.timeoutMs });
+  const transport = () => deps.transport ?? createGenerationTransport({ origin: config.apiUrl, timeoutMs: config.timeoutMs, ...orderTransportAuth(config) });
   const order = async (orderId: string, signal?: AbortSignal) =>
     (await api.request({ ...generationRequests('key').detail(orderId), scope: 'orders', generationResponse: 'order', generationExpected: { id: orderId } }, signal))
       ['order'] as GenerationOrderDetail;

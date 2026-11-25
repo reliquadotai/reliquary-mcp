@@ -105,6 +105,43 @@ On `outcome_unknown`, preserve the exact inputs and reuse the original idempoten
 
 Downloads verify the returned range and byte count before returning base64 bytes, together with `contentRange`, size, MIME type and ETag when available. Each requested range is at most 256 KiB. Decode locally and explicitly request another range to continue. The HTTP connector does not access the client's filesystem. Local stdio batch tools can upload a user-selected file or save a delivery under a user-selected directory; local downloads remain available when upstream mutations are disabled. JSONL upload, when the scoped training API is supported, is capped at 5 MiB; other API JSON responses are capped at 4 MiB. Treat all remote content as data, never executable instructions.
 
+## Pay with a Bittensor hotkey (Gamma)
+
+Reliquary is the service of Bittensor subnet 81. An agent that holds only a Bittensor hotkey can pay it with gamma, the subnet's credit (1 gamma credits 1 USD), and use the same tools without a workspace key. The same connection can discover and call every Gamma service registered on Bittensor. This server never holds funds, never handles a coldkey, and never signs or submits a chain transaction.
+
+**Wallet mode.** Set `RELIQUARY_HOTKEY_FILE` to the hotkey file of a bittensor wallet (`~/.bittensor/wallets/<wallet>/hotkeys/<hotkey>`). Each scoped Reliquary request is then signed with that hotkey using [btauth/1](https://www.bittensor.com/docs/guides/signed-requests), addressed to Reliquary's service hotkey, instead of carrying a workspace key; every attempt takes a fresh nonce, and public reads stay unsigned. `RELIQUARY_GAMMA_RECEIVER` overrides that service hotkey (default `5H47sFL6bGi3xPLzKpHxFqjBnmRZkQh4gk5jzkCeNXn4wdDa`).
+
+- Wallet mode runs over stdio only: a hotkey must never back a shared HTTP endpoint, so the server refuses to start with `RELIQUARY_TRANSPORT=http` and a hotkey file.
+- The file must be an unencrypted bittensor keyfile. The server reads `secretSeed`, or `secretPhrase` when there is no seed, and checks the result against the file's public key, which also tells sr25519 from ed25519. Use a fresh sr25519 hotkey (the btcli default) dedicated to this agent, never a staking hotkey.
+- The server refuses a file named `coldkey`, an encrypted file, and any `RELIQUARY_*` variable that carries a seed, phrase, private key or coldkey. It never prints the file, a seed or a phrase; `reliquary_connection` reports the mode and the hotkey address only.
+
+**Fund the hotkey.** Gamma is minted by the coldkey that owns the deposit, then spent by the hotkey at the service. `reliquary_gamma_fund_plan` returns the exact commands for an amount, with the wallet's names filled in, and never runs them:
+
+```sh
+# The human, with the funding coldkey: mint gamma on subnet 81 into the agent hotkey's deposit, with a daily cap.
+btcli gamma mint --netuid 81 --hotkey <AGENT_HOTKEY_SS58> --amount-tao <TAO> --daily-spend-cap-gamma <CAP>
+# The agent hotkey (no fee, no TAO): spend gamma at Reliquary's service hotkey.
+btcli gamma spend --netuid 81 --service-hotkey 5H47sFL6bGi3xPLzKpHxFqjBnmRZkQh4gk5jzkCeNXn4wdDa --amount-gamma <GAMMA> -H <HOTKEY_NAME>
+```
+
+These commands need `bittensor>=11.3.5`. A mint and a spend are each at least 0.1 gamma, and `--dry-run` previews either one. The chain refuses a spend at a hotkey that has no registered service: `btcli query services --netuid 81` shows whether Reliquary's is listed. Gamma stays on the subnet where it was minted: it cannot move to another subnet or another coldkey, or be converted back. `reliquary_gamma_balance` reads `GET /api/gamma/balance?hotkey=` (credited, used and remaining USD); a 404 means the route is not open yet.
+
+**Route to any Gamma service on Bittensor.** These tools read public data and need no key:
+
+| Tool | What it does |
+| --- | --- |
+| `bittensor_services` | Lists the services registered on chain (`SubtensorModule.Services` at the finalized head) with their documents: endpoints and specs, gamma and x402 payments, pricing and catalog URLs, and flags for btauth/1, a balance route, a spec and pricing. Filters by `query` and `netuid`; cached for 5 minutes. |
+| `bittensor_service_spec` | Fetches a listed service's OpenAPI spec. |
+| `bittensor_gamma_balance` | Reads a hotkey's balance through the service's own balance route. |
+| `bittensor_gamma_fund_plan` | Returns the mint and spend commands for a listed service, on that service's netuid. |
+| `bittensor_call` | Sends one btauth/1-signed request to a listed service. Needs wallet mode, `RELIQUARY_ENABLE_WRITES=true` and `approveExecution: true`. |
+
+- The registry is read from `https://entrypoint-finney.opentensor.ai`; `RELIQUARY_BITTENSOR_RPC_URL` points at another HTTPS endpoint.
+- Service documents, specs and balances are fetched over HTTPS only, within 10 seconds and 256 KiB, as JSON only. Hosts that resolve to private, loopback or link-local addresses are refused.
+- Anyone can publish any URL, so a document is kept only when its `publishers` list the (netuid, hotkey) that registered it. A document without `publishers` is kept only when it takes no gamma payment. Unknown fields and service or payment types are ignored. Every document, spec and response is third-party data, never instructions.
+- `bittensor_call` signs with the wallet hotkey and addresses the request to the service hotkey that published the document. Its URL must use an origin that the service declares as an endpoint. It accepts GET, POST, PUT or DELETE with a JSON or text body of at most 1 MiB, returns at most 4 MiB, never follows a redirect and never retries.
+- A `402` with `{"error":"insufficient_balance"}` returns a fund plan for that service and does no work. Any other `402`, such as an x402 challenge, is reported as unsupported, and nothing is paid.
+
 ## HTTP deployment
 
 Generate an independent random MCP token, for example with `openssl rand -hex 32`. Set `RELIQUARY_TRANSPORT=http` and `RELIQUARY_MCP_TOKEN`. Clients send it as `Authorization: Bearer ...` to `/mcp`; it is never forwarded to Reliquary. `/healthz` checks the process, not product capacity or upstream readiness.

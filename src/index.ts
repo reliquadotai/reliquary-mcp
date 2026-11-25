@@ -3,6 +3,7 @@ import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/s
 import { loadConfig, mcpMessageLimit } from './config.js';
 import { buildServer } from './server.js';
 import { createHttpServer } from './http.js';
+import { WalletConfigError } from './wallet.js';
 
 try {
   const config = loadConfig();
@@ -26,7 +27,8 @@ try {
     process.once('SIGTERM', stop);
     process.once('SIGINT', stop);
   }
-} catch {
-  process.stderr.write('Reliquary MCP configuration is invalid. Check environment settings.\n');
+} catch (error) {
+  // Only wallet errors carry a message, and theirs are fixed texts without file contents or key material.
+  process.stderr.write(`Reliquary MCP configuration is invalid. ${error instanceof WalletConfigError ? error.message : 'Check environment settings.'}\n`);
   process.exitCode = 1;
 }
