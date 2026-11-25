@@ -1,5 +1,6 @@
 import { parseAffineBatchPrepared } from '@reliquary/api/affine-batches';
 import type { Config } from './config.js';
+import { flatRefusalCode, signWalletRequest } from './wallet.js';
 import type { ApiRequest } from './tools.js';
 import { parseGenerationResponse } from '@reliquary/api';
 import { parseNativePreparationCatalog, parseNativePreparationReview, parseNativePreparation, parseAffineEvaluationPrepared } from '@reliquary/api/affine-pilot';
@@ -112,7 +113,7 @@ export class ApiClient {
           downloadEnd < downloadStart || downloadEnd - downloadStart >= DOWNLOAD_LIMIT) throw new ApiError('invalid_file_range');
       headers.set('Range', `bytes=${downloadStart}-${downloadEnd}`);
     }
-    if (input.scope) {
+    if (input.scope && !this.config.wallet) {
       const key = this.config.keys[input.scope];
       if (!key) throw new ApiError('credential_required');
       headers.set('Authorization', `Bearer ${key}`);
@@ -127,6 +128,8 @@ export class ApiClient {
     return withRequestSlot(async () => {
       let requestId: string | undefined, retryAfterSeconds: number | undefined;
       try {
+        // A fresh btauth/1 signature per attempt, over the exact bytes sent.
+        if (input.scope && this.config.wallet) signWalletRequest(headers, this.config.wallet, method, url, body);
         const response = await this.fetcher(url, {
           method, headers, ...(body === undefined ? {} : { body }), redirect: 'manual', signal: requestSignal, credentials: 'omit',
         });
@@ -144,6 +147,8 @@ export class ApiClient {
           if (error instanceof ApiError) throw new ApiError(error.code, response.status, retryKey, revision, requestId, retryAfterSeconds);
           throw error;
         }
+        const flat = flatRefusalCode(response.status, bytes);
+        if (flat) throw new ApiError(flat, response.status, retryKey, revision, requestId, retryAfterSeconds);
         if (!response.ok) {
           if (mutating && (response.status >= 500 || response.status === 408)) throw new ApiError('outcome_unknown', response.status, retryKey, revision, requestId, retryAfterSeconds);
           let code = `http_${response.status}`, message: string | undefined;

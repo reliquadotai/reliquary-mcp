@@ -1,3 +1,6 @@
+import { gammaReceiver, loadWallet, type Wallet } from './wallet.js';
+import { bittensorRpcUrl } from './chain.js';
+
 export const scopes = ['resources', 'orders', 'evaluations', 'training'] as const;
 // A 5 MiB JSONL string can double when escaped inside a protocol message.
 export const mcpMessageLimit = 12 * 1024 * 1024;
@@ -12,6 +15,10 @@ export interface Config {
   host: '127.0.0.1' | '0.0.0.0';
   publicUrl?: string;
   mcpToken?: string;
+  /** Wallet mode: scoped Reliquary requests are signed with this hotkey (btauth/1) instead of a workspace key. */
+  wallet?: Wallet;
+  /** The Reliquary service hotkey on SN81 and the Subtensor RPC that the Gamma tools and the router read. */
+  gamma: { receiver: string; rpcUrl: string };
 }
 
 function integer(value: string | undefined, fallback: number, min: number, max: number): number {
@@ -47,7 +54,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     enableWrites: env.RELIQUARY_ENABLE_WRITES === 'true',
     timeoutMs: integer(env.RELIQUARY_TIMEOUT_MS, 30_000, 1000, 60_000),
     port: integer(env.RELIQUARY_PORT, 3000, 1, 65535),
+    gamma: { receiver: gammaReceiver(env), rpcUrl: bittensorRpcUrl(env) },
   };
+  const wallet = loadWallet(env, transport);
+  if (wallet) config.wallet = wallet;
   if (env.RELIQUARY_PUBLIC_URL) {
     const publicUrl = new URL(env.RELIQUARY_PUBLIC_URL);
     if (publicUrl.protocol !== 'https:' || publicUrl.username || publicUrl.password ||
