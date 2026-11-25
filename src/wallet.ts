@@ -131,9 +131,58 @@ export function signWalletRequest(headers: Headers, wallet: Wallet, method: stri
   for (const [name, value] of Object.entries(signRequest(wallet.signer, { method, url, body, receiver: wallet.receiver }))) headers.set(name, value);
 }
 
+// The largest refusal body the wallet fetch reads to nest a flat code; a longer body passes through unchanged.
+const REFUSAL_LIMIT = 64 * 1024;
+
+/** A whole body of at most `limit` bytes, or, when it is longer, the same bytes again as an unread stream. */
+async function readRefusal(body: ReadableStream<Uint8Array>, limit: number): Promise<Uint8Array<ArrayBuffer> | ReadableStream<Uint8Array>> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const next = await reader.read();
+    if (next.done) {
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+      return bytes;
+    }
+    chunks.push(next.value);
+    size += next.value.byteLength;
+    if (size > limit)
+      return new ReadableStream<Uint8Array>({
+        start(controller) { for (const chunk of chunks) controller.enqueue(chunk); },
+        async pull(controller) { const more = await reader.read(); if (more.done) controller.close(); else controller.enqueue(more.value); },
+        cancel(reason) { return reader.cancel(reason); },
+      });
+  }
+}
+
+/**
+ * The packaged transport reads only nested refusal codes ({"error":{"code":"…"}}), while a Gamma service answers a signed
+ * request with a flat one ({"error":"insufficient_balance"}). Nest a flat 4xx code, keeping every other field, so that a
+ * batch upload without balance reports insufficient_balance rather than http_402. Every other response passes through.
+ */
+async function nestFlatRefusal(response: Response): Promise<Response> {
+  if (response.status < 400 || response.status >= 500 || response.status === 408 || !response.body) return response;
+  const init = { status: response.status, statusText: response.statusText, headers: response.headers };
+  const read = await readRefusal(response.body, REFUSAL_LIMIT);
+  if (!(read instanceof Uint8Array)) return new Response(read, init);
+  const code = flatRefusalCode(response.status, read);
+  if (!code) return new Response(read, init);
+  const value = JSON.parse(Buffer.from(read).toString('utf8')) as Record<string, unknown>;
+  const message = typeof value['message'] === 'string' ? value['message'] : undefined;
+  const headers = new Headers(response.headers);
+  headers.delete('Content-Length');
+  headers.delete('Content-Encoding');
+  headers.set('Content-Type', 'application/json');
+  return new Response(JSON.stringify({ ...value, error: { code, ...(message === undefined ? {} : { message }) } }), { ...init, headers });
+}
+
 /**
  * A fetch for the packaged generation transport (batch upload and download). The transport marks credentialed
- * routes with a placeholder bearer key; this fetch removes it and signs those requests instead.
+ * routes with a placeholder bearer key; this fetch removes it, signs those requests instead, and nests a flat Gamma
+ * refusal code in their answers so that the transport can read it.
  */
 export const WALLET_TRANSPORT_KEY = 'btauth-signed';
 export function walletFetch(wallet: Wallet, fetcher: typeof fetch = fetch): typeof fetch {
@@ -148,7 +197,8 @@ export function walletFetch(wallet: Wallet, fetcher: typeof fetch = fetch): type
       if (body !== undefined && body !== null && typeof body !== 'string' && !(body instanceof Uint8Array)) throw new TypeError('Unsupported request body.');
       signWalletRequest(headers, wallet, init.method ?? 'GET', url, body);
     }
-    return fetcher(url, { ...init, headers });
+    const response = await fetcher(url, { ...init, headers });
+    return credentialed ? nestFlatRefusal(response) : response;
   }) as typeof fetch;
 }
 
