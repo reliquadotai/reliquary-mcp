@@ -80,7 +80,7 @@ export function registerGammaTools(server: McpServer, config: Config, api: ApiCl
     return success({ service: { name: 'Reliquary', netuid: RELIQUARY_NETUID, serviceHotkey: config.gamma.receiver, registered: serviceRegistered, documentUrl: serviceUrl },
       ...plan,
       ...(serviceRegistered === true ? {} : { warning: serviceRegistered === false
-        ? 'Reliquary\'s service hotkey has no registered service on SN81 yet, so the chain refuses a spend there. Mint only when you intend to wait; do not spend yet.'
+        ? 'Reliquary\'s service hotkey has no registered service on SN81 yet, and the chain refuses a spend at it. Do not spend until btcli query services --netuid 81 lists it.'
         : 'Could not read the service registry: run btcli query services --netuid 81 before spending.' }) });
   });
 
