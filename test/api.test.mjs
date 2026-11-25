@@ -146,3 +146,57 @@ test('Affine valid responses remain bound to reviewed inputs and requested ident
     await assert.rejects(new ApiClient(cfg, async () => Response.json(other)).request(build('affine_evaluation_prepare', evalInput)), { code: 'outcome_unknown' });
   }
 });
+
+test('a refusal carries the API message as bounded text and nothing else of the body', async () => {
+  const { refusalMessage } = await import('../dist/api.js');
+  const refused = (status, error, extra = {}) => new ApiClient(config, async () => Response.json({ error, ...extra }, { status }));
+  const quote = { path: '/api/v1/dataset-orders/quotes', method: 'POST', json: {}, scope: 'resources' };
+  // The Worker's answer for a batch file the subnet refuses: the reason exists only in the message.
+  await assert.rejects(refused(422, { code: 'invalid_batch_file', message: 'no_usable_line: none of the 3 lines is usable' }).request(quote),
+    error => error.code === 'invalid_batch_file' && error.status === 422 && error.serverMessage === 'no_usable_line: none of the 3 lines is usable' &&
+      error.message === 'Reliquary request failed: invalid_batch_file.');
+  const long = await refused(404, { code: 'not_found', message: ' line one\r\n\u0007line\u2028two\u009b' + 'x'.repeat(5000) }).request({ path: '/api/resources' }).catch(error => error);
+  assert.equal(long.serverMessage.length, 300);
+  assert.ok(long.serverMessage.startsWith('line one line two x'));
+  assert.ok(!/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(long.serverMessage));
+  // Only a string message is read: other fields of the body never reach the error.
+  const other = await refused(400, { code: 'invalid_quote', message: { text: 'nested' }, detail: 'body detail', headers: { authorization: 'echoed header' } }, { debug: 'body debug' })
+    .request(quote).catch(error => error);
+  assert.equal(other.code, 'invalid_quote');
+  assert.equal(other.serverMessage, undefined);
+  assert.ok(!JSON.stringify({ ...other }).match(/nested|body detail|echoed header|body debug/));
+  // A message that holds a configured credential, or anything shaped like one, is dropped whole.
+  for (const message of [`Bearer ${key} was refused`, 'x'.repeat(290) + key, 'key rlq_' + 'a'.repeat(48) + ' is unknown'])
+    assert.equal((await refused(401, { code: 'invalid_credential', message }).request({ path: '/api/resources', scope: 'resources' }).catch(error => error)).serverMessage, undefined);
+  assert.equal(refusalMessage('token ' + 't'.repeat(32), ['t'.repeat(32)]), undefined);
+  assert.equal(refusalMessage(' \n '), undefined);
+  // A server failure's text is not a refusal reason, and an ambiguous mutation stays outcome_unknown.
+  assert.equal((await refused(503, { code: 'unavailable', message: 'upstream text' }).request({ path: '/api/resources' }).catch(error => error)).serverMessage, undefined);
+  await assert.rejects(refused(500, { code: 'internal_error', message: 'upstream text' }).request(quote), error => error.code === 'outcome_unknown' && error.serverMessage === undefined);
+});
+
+test('a refused batch quote tells the agent why, without the credential or request headers', async () => {
+  const { Client } = await import('@modelcontextprotocol/client');
+  const { InMemoryTransport } = await import('@modelcontextprotocol/server');
+  const { buildServer } = await import('../dist/server.js');
+  const orders = 'rlq_' + '7'.repeat(48);
+  const cfg = loadConfig({ RELIQUARY_ORDERS_KEY: orders, RELIQUARY_ENABLE_WRITES: 'true' });
+  let sent;
+  const api = new ApiClient(cfg, async (_url, init) => {
+    sent = init.headers;
+    return Response.json({ error: { code: 'invalid_batch_file', message: 'no_usable_line: none of the 3 lines is usable' } }, { status: 422, headers: { 'X-Request-ID': 'request-422' } });
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = buildServer(cfg, api);
+  const client = new Client({ name: 'refusal-test', version: '1.0.0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const result = await client.callTool({ name: 'reliquary_batch_quote', arguments: { model: 'org/model', revision: 'a'.repeat(40), inputFileId: 'file-1' } });
+    assert.equal(result.isError, true);
+    assert.deepEqual(result.structuredContent.data, { error: { code: 'invalid_batch_file', status: 422, requestId: 'request-422', message: 'no_usable_line: none of the 3 lines is usable' } });
+    assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent.data);
+    assert.equal(sent.get('Authorization'), `Bearer ${orders}`);
+    assert.ok(!JSON.stringify(result).includes(orders) && !/authorization|bearer/i.test(JSON.stringify(result)));
+  } finally { await client.close(); await server.close(); }
+});
